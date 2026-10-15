@@ -1,0 +1,10 @@
+// ==UserScript==
+// @name         OnlyBans planner
+// @namespace    onlybans-strategy
+// @version      0.2.0
+// @description  Read-only overlay that plans the most efficient purchases in onlybans.wtf
+// @match        *://onlybans.wtf/*
+// @match        *://*.onlybans.wtf/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==

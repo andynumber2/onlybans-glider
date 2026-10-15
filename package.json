@@ -1,0 +1,13 @@
+{
+  "name": "onlybans-strategy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test": "node --test test/*.test.js",
+    "e2e": "npm run build && node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}
