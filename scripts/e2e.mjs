@@ -5,7 +5,7 @@
 import { chromium } from 'playwright';
 import { readFile, mkdir } from 'node:fs/promises';
 
-const script = await readFile('dist/onlybans-helper.user.js', 'utf8');
+const script = await readFile('dist/onlybans-glider.user.js', 'utf8');
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ bypassCSP: true, viewport: { width: 1400, height: 900 } })).newPage();
 const errors = [];

@@ -1,16 +1,21 @@
-// Overlay panel. Read-only: it never clicks, buys, or edits game state.
+// Overlay panel: plan display, settings, and the automation toggles.
 
-const SETTINGS_KEY = 'onlybans-helper-settings';
+const SETTINGS_KEY = 'onlybans-glider-settings';
 const HORIZONS = [
   ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['12h', 43200], ['2d', 172800],
 ];
-const DEFAULTS = { auto: false, horizon: 900, clicksPerSec: 0, depth: 3, beam: 5, collapsed: false, x: 12, y: 12 };
+const DEFAULTS = {
+  auto: false, horizon: 900, clicksPerSec: 0, depth: 3, beam: 5, collapsed: false,
+  side: 'left', x: 12, y: 12, ops: {},
+};
+const LOG_LINES = 6;
 
 function loadSettings() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+    return { ...DEFAULTS, ...saved, ops: { ...OPS_DEFAULTS, ...(saved.ops ?? {}) } };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, ops: { ...OPS_DEFAULTS } };
   }
 }
 
@@ -21,7 +26,7 @@ function saveSettings(settings) {
 }
 
 const CSS = `
-#obh { position: fixed; z-index: 99999; width: 340px; font: 12px/1.35 ui-monospace, Menlo, monospace;
+#obh { position: fixed; z-index: 99999; width: min(340px, calc(100vw - 8px)); font: 12px/1.35 ui-monospace, Menlo, monospace;
   color: #e6ebff; background: rgba(10,13,24,.94); border: 2px solid #f5c542; border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 #obh header { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: #f5c542;
@@ -44,10 +49,15 @@ const CSS = `
 #obh th { color: #8592b3; font-weight: 400; border-bottom: 1px solid #39425f; }
 #obh h4 { margin: 8px 0 2px; color: #f5c542; font-size: 12px; }
 #obh .err { color: #ff6b6b; white-space: pre-wrap; }
+#obh details.ops { margin-bottom: 6px; border: 1px solid #39425f; padding: 2px 6px; }
+#obh details.ops summary { cursor: pointer; color: #f5c542; }
+#obh details.ops label { display: block; }
+#obh details.ops input { width: auto; }
+#obh .opsLog { color: #8592b3; margin-top: 4px; white-space: pre-wrap; }
 #buildings .product.obh-pick { outline: 3px solid #6fdc6f; outline-offset: -3px; }
 `;
 
-export function createOverlay({ onChange, onRefresh }) {
+export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
   const settings = loadSettings();
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -55,11 +65,9 @@ export function createOverlay({ onChange, onRefresh }) {
 
   const root = document.createElement('div');
   root.id = 'obh';
-  root.style.left = settings.x + 'px';
-  root.style.top = settings.y + 'px';
   if (settings.collapsed) root.classList.add('collapsed');
   root.innerHTML = `
-    <header><span>OnlyBans planner</span>
+    <header><span>OnlyBans Glider</span>
       <button data-act="auto" title="Auto-buy the plan's buy-now list">AUTO</button>
       <button data-act="refresh" title="Replan now">⟳</button>
       <button data-act="collapse" title="Collapse">–</button></header>
@@ -70,9 +78,28 @@ export function createOverlay({ onChange, onRefresh }) {
         <label>Clicks/s <input data-set="clicksPerSec" type="number" min="0" max="20" step="1"></label>
         <label>Depth <input data-set="depth" type="number" min="1" max="5" step="1"></label>
       </div>
+      <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
+        ${OPS.map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
+        <div class="opsLog"></div>
+      </details>
+      <details class="ops"><summary>Stats</summary>
+        <div class="statsBody muted">Collecting…</div>
+        <div class="controls"><button data-act="copyStats">Copy JSON</button>
+          <button data-act="resetStats">Reset</button></div>
+      </details>
       <div class="content muted">Binding to game…</div>
     </div>`;
   document.body.appendChild(root);
+  place(root, settings);
+  window.addEventListener('resize', () => place(root, settings));
+
+  for (const el of root.querySelectorAll('[data-op]')) {
+    el.checked = !!settings.ops[el.dataset.op];
+    el.addEventListener('change', () => {
+      settings.ops[el.dataset.op] = el.checked;
+      saveSettings(settings);
+    });
+  }
 
   for (const el of root.querySelectorAll('[data-set]')) {
     el.value = settings[el.dataset.set];
@@ -93,32 +120,86 @@ export function createOverlay({ onChange, onRefresh }) {
     onChange(settings);
   });
   root.querySelector('[data-act="refresh"]').addEventListener('click', () => onRefresh());
+  const copyBtn = root.querySelector('[data-act="copyStats"]');
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await onCopyStats();
+      copyBtn.textContent = 'Copied';
+    } catch {
+      copyBtn.textContent = 'Copy failed';
+    }
+    setTimeout(() => { copyBtn.textContent = 'Copy JSON'; }, 2000);
+  });
+  root.querySelector('[data-act="resetStats"]').addEventListener('click', () => {
+    if (confirm('Clear all recorded stats?')) onResetStats();
+  });
   root.querySelector('[data-act="collapse"]').addEventListener('click', () => {
     settings.collapsed = !settings.collapsed;
     root.classList.toggle('collapsed', settings.collapsed);
     saveSettings(settings);
   });
-  makeDraggable(root, root.querySelector('header'), (x, y) => {
-    settings.x = x;
-    settings.y = y;
+  makeDraggable(root, root.querySelector('header'), () => {
+    // Anchor to the nearer edge so a window resize keeps the panel in view.
+    const rect = root.getBoundingClientRect();
+    if (rect.left + rect.width / 2 > window.innerWidth / 2) {
+      settings.side = 'right';
+      settings.x = window.innerWidth - rect.right;
+    } else {
+      settings.side = 'left';
+      settings.x = rect.left;
+    }
+    settings.y = rect.top;
+    place(root, settings);
     saveSettings(settings);
   });
 
   const content = root.querySelector('.content');
+  const opsLog = root.querySelector('.opsLog');
+  const statsBody = root.querySelector('.statsBody');
+  const logLines = [];
   return {
     settings,
     render(html) {
       content.classList.remove('muted');
       content.innerHTML = html;
     },
+    renderStats(html) {
+      statsBody.classList.remove('muted');
+      statsBody.innerHTML = html;
+    },
+    log(line) {
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      logLines.unshift(`${t} ${line}`);
+      logLines.length = Math.min(logLines.length, LOG_LINES);
+      opsLog.replaceChildren(...logLines.map(l => Object.assign(document.createElement('div'), { textContent: l })));
+    },
   };
+}
+
+// Positions the panel from its saved edge offset, clamped inside the viewport.
+function place(root, settings) {
+  const maxX = Math.max(0, window.innerWidth - root.offsetWidth);
+  const maxY = Math.max(0, window.innerHeight - 32);
+  const x = Math.min(Math.max(0, settings.x), maxX);
+  const y = Math.min(Math.max(0, settings.y), maxY);
+  if (settings.side === 'right') {
+    root.style.left = 'auto';
+    root.style.right = x + 'px';
+  } else {
+    root.style.right = 'auto';
+    root.style.left = x + 'px';
+  }
+  root.style.top = y + 'px';
 }
 
 function makeDraggable(el, handle, onDrop) {
   let start = null;
   handle.addEventListener('pointerdown', e => {
     if (e.target.closest('button')) return;
-    start = { x: e.clientX - el.offsetLeft, y: e.clientY - el.offsetTop };
+    const rect = el.getBoundingClientRect();
+    el.style.right = 'auto';
+    el.style.left = rect.left + 'px';
+    start = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     handle.setPointerCapture(e.pointerId);
   });
   handle.addEventListener('pointermove', e => {
@@ -129,7 +210,7 @@ function makeDraggable(el, handle, onDrop) {
   handle.addEventListener('pointerup', () => {
     if (!start) return;
     start = null;
-    onDrop(el.offsetLeft, el.offsetTop);
+    onDrop();
   });
 }
 

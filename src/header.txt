@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         OnlyBans planner
-// @namespace    onlybans-strategy
-// @version      0.2.0
-// @description  Read-only overlay that plans the most efficient purchases in onlybans.wtf
+// @name         OnlyBans Glider
+// @namespace    onlybans-glider
+// @version      0.9.0
+// @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
 // @run-at       document-idle

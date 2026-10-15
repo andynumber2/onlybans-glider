@@ -17,8 +17,11 @@ export async function bindGame(win) {
   let logic = null;
   let buildings = null;
   let upgrades = null;
+  let dupe = null;
   for (const val of Object.values(mod)) {
     if (val && typeof val === 'object' && typeof val.calculateGains === 'function' && val.G) logic = val;
+    // Dupe-outbreak minigame state: optional, automation skips it if absent.
+    if (val && typeof val === 'object' && 'answer' in val && Array.isArray(val.deck) && Array.isArray(val.done)) dupe = val;
     if (Array.isArray(val) && val.length && typeof val[0] === 'object' && val[0]) {
       if ('baseCost' in val[0] && 'baseBps' in val[0]) buildings = val;
       if (typeof val[0].unlock === 'function' && 'kind' in val[0]) upgrades = val;
@@ -30,7 +33,7 @@ export async function bindGame(win) {
   if (!upgrades) missing.push('upgrade table');
   if (missing.length) throw new Error('could not find: ' + missing.join(', '));
 
-  return { logic, G: logic.G, buildings, upgrades, build: script.src.split('/').pop() };
+  return { logic, G: logic.G, buildings, upgrades, dupe, build: script.src.split('/').pop() };
 }
 
 // Runs fn(sim) with the live state temporarily mutated, then restores it.
@@ -91,6 +94,27 @@ export function withSandbox(game, { clicksPerSec = 0 } = {}, fn) {
 function buildingVisible(def, s) {
   const b = s.buildings[def.id];
   return def.index === 0 || b.amount > 0 || b.highest > 0 || s.bansEarned >= def.baseCost;
+}
+
+// Bans/sec regained if the given buff (e.g. a stopped department) ended now.
+// Measured with the game's own calculateGains, then state is restored.
+export function buffCost(game, buffKey) {
+  const { logic, G } = game;
+  const s = G.s;
+  const saved = s.buffs;
+  const buff = saved.find(b => b.key === buffKey);
+  if (!buff) return 0;
+  try {
+    s.buffs = saved.filter(b => b !== buff);
+    logic.calculateGains();
+    const without = G.bps;
+    s.buffs = saved;
+    logic.calculateGains();
+    return Math.max(0, without - G.bps);
+  } finally {
+    s.buffs = saved;
+    logic.calculateGains();
+  }
 }
 
 function safeUnlock(def, ctx) {

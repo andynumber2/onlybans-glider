@@ -1,12 +1,12 @@
-# OnlyBans planner
+# OnlyBans Glider
 
-Read-only Tampermonkey overlay for https://onlybans.wtf that recommends what to buy next.
+Tampermonkey overlay for https://onlybans.wtf: plans the most efficient purchases and, with AUTO on, plays the game's mechanics through its own UI.
 
 ## Install
 
 1. Install Tampermonkey. In Chrome, also enable "Allow User Scripts" on the extension's details page.
 2. `npm run build`
-3. Tampermonkey dashboard → Utilities → import `dist/onlybans-helper.user.js` (or paste it into a new script).
+3. Tampermonkey dashboard → Utilities → import `dist/onlybans-glider.user.js` (or paste it into a new script).
 4. Reload onlybans.wtf. The panel appears top-left. Drag it by its header.
 
 ## Using it

@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 import { readFile } from 'node:fs/promises';
 
-const script = await readFile('dist/onlybans-helper.user.js', 'utf8');
+const script = await readFile('dist/onlybans-glider.user.js', 'utf8');
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ bypassCSP: true, viewport: { width: 1400, height: 900 } })).newPage();
 const errors = [];
@@ -15,7 +15,7 @@ await page.waitForFunction(() => window.OnlyBans && window.OnlyBans.G);
 await page.getByText('GET FUNDED').click({ timeout: 5000 }).catch(() => {});
 await page.waitForTimeout(1000);
 await page.evaluate(() => {
-  localStorage.setItem('onlybans-helper-settings', JSON.stringify({ auto: true }));
+  localStorage.setItem('onlybans-glider-settings', JSON.stringify({ auto: true }));
   window.OnlyBans.G.s.bans = 5e4;
 });
 

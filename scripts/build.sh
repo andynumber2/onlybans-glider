@@ -3,13 +3,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p dist
-out=dist/onlybans-helper.user.js
+out=dist/onlybans-glider.user.js
 {
   cat src/header.txt
   echo
   echo '(() => {'
   echo "'use strict';"
-  for f in planner game overlay auto main; do
+  for f in planner game ops stats overlay auto main; do
     echo
     echo "// ---- src/$f.js ----"
     sed -E 's/^export //' "src/$f.js"

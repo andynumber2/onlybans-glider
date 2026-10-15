@@ -2,6 +2,8 @@
 
 const REPLAN_MS = 2000;
 const BUY_NOW_ROWS = 6;
+const OPS_MS = 400;
+const STATS_MS = 1000;
 
 async function waitForGame() {
   for (let i = 0; i < 300; i++) {
@@ -13,9 +15,12 @@ async function waitForGame() {
 
 async function start() {
   let game = null;
+  const stats = await createStats();
   const ui = createOverlay({
     onChange: () => tick(),
     onRefresh: () => rebind(),
+    onCopyStats: () => navigator.clipboard.writeText(stats.exportJson()),
+    onResetStats: () => stats.reset(),
   });
 
   async function rebind() {
@@ -47,13 +52,44 @@ async function start() {
 
   await rebind();
   setInterval(tick, REPLAN_MS);
+  startHammer({ get G() { return game ? game.G : { ascending: true }; } }, () => ui.settings);
+  setInterval(() => {
+    if (!game || !ui.settings.auto) return;
+    const did = runOps(game, ui.settings.ops);
+    if (did) {
+      ui.log(did);
+      stats.action(did);
+    }
+  }, OPS_MS);
+  // Stats record whether or not AUTO is on, so manual play can be compared.
+  setInterval(() => {
+    if (!game) return;
+    stats.tick(game.G, projectedHeat(game.G, ui.settings.ops));
+    ui.renderStats(statsHtml(stats.summary()));
+  }, STATS_MS);
+}
+
+function statsHtml(sum) {
+  const tiers = TIER_NAMES.map((name, i) => `${name} ${sum.counts[i]}`).join(' · ');
+  let html = `<div>Waves: ${sum.waves} · ${tiers}</div>`;
+  html += `<div>Avg income (last 10 min): ${fmtNum(sum.avgBps)}/s</div>`;
+  const w = sum.lastWave;
+  if (w) {
+    html += `<div>Last wave #${w.n}: ${TIER_NAMES[w.tier] ?? '?'} · charge ${Math.round(w.f * 100)}%` +
+      ` · notch ${w.notch} · ${w.audited ? 'audited' : 'not audited'}` +
+      ` · heat ${w.heat?.toFixed(1)} (projected ${w.projectedHeat?.toFixed(1) ?? '?'})</div>`;
+  }
+  return html;
 }
 
 function render(game, ui, autoBought) {
   const { settings } = ui;
   const bank = game.G.s.bans;
   const t0 = performance.now();
-  const result = withSandbox(game, settings, sim =>
+  // While the hammer clicker runs, value click upgrades at its click rate.
+  let clicksPerSec = settings.clicksPerSec;
+  if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, HAMMER_CPS);
+  const result = withSandbox(game, { clicksPerSec }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = performance.now() - t0;
 

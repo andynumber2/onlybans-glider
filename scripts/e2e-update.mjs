@@ -2,7 +2,7 @@
 import { chromium } from 'playwright';
 import { readFile } from 'node:fs/promises';
 
-const script = await readFile('dist/onlybans-helper.user.js', 'utf8');
+const script = await readFile('dist/onlybans-glider.user.js', 'utf8');
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ bypassCSP: true })).newPage();
 await page.goto('https://onlybans.wtf/', { waitUntil: 'load' });
