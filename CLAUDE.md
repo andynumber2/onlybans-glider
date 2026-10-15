@@ -66,6 +66,8 @@ Commands: `npm run build`, `npm test`, `bash scripts/fetch.sh`, `npm run experim
 
 ## Workflow notes
 
+- Do not use Claude Code memory notes for this project. They are local to one machine and do not carry across machines. Put every durable fact, decision, and queue item in files inside this repository (this file, `FEATURES.md`, etc.).
+
 - `FEATURES.md` is the feature register (one row per game key, status, one-sentence strategy). After fetching a new build, run `python3 -I scripts/feature-scan.py`: it lists keys the register lacks (new features) or has but the bundle dropped. Keep the register in sync with every behavior change.
 - Run `bash scripts/fetch.sh` before every bundle analysis; the game ships often. The bundle filename hash (`index-<hash>.js`) is the only version marker (the save `version` field is a schema number). `ANALYZED_BUILD` (tracked) names the build the automation rules were last checked against; it's stamped into the userscript and the panel warns when the live build differs. Update it after re-checking a new build.
 - When the game updates: `bash scripts/fetch.sh`, then grep the new bundle in `research/site/` with `python3 -I - <<'EOF' ... EOF` (do not cat it; it is ~680KB of minified JS). `node -e`/`python -c` and commands containing backslash sequences can be blocked by the project-boundary hook; use heredocs or the Edit tool.
