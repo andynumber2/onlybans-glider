@@ -6,6 +6,7 @@
 export const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
+  { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome)' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -13,7 +14,7 @@ export const OPS = [
   { key: 'evaders', label: 'Pop ban evaders' },
   { key: 'weird', label: 'Weird events (coup, strike, you are banned)' },
   { key: 'notch', label: 'Strictness notch (loosest that stays safe)' },
-  { key: 'shimmers', label: 'Click bonus objects (skips red reports)' },
+  { key: 'shimmers', label: 'Click bonus objects (incl. red reports: higher EV)' },
   { key: 'clip', label: 'Clip it! (live cheater stream)' },
   { key: 'relics', label: 'Evidence Seized: pick a relic' },
   { key: 'priority', label: 'Priority cases' },
@@ -30,12 +31,28 @@ export const OPS = [
   { key: 'banWaves', label: 'Ban waves (100%, audit first when possible)' },
 ];
 
-export const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, true]));
+export const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, o.default ?? true]));
 
 // Tunables. Burnout is 0..100; humans lose burnout/200 of output.
 const COFFEE_MAX_BURNOUT = 40; // the game's own "suggest" threshold
 const WEEKEND_WORK_MAX_BURNOUT = 50; // crunch adds +20; stay under the 70 "hot" line
 const LEVER_AT_BURNOUT = 70; // the game's "hot" threshold
+const THERMOS_LEVER_AT = 95; // Thermos: tech ×(3 + burnout/10) during the party
+
+function hasRelic(game, id) {
+  return !!(game && game.relics && game.relics.owned.includes(id));
+}
+
+// Thermos strategy: let burnout climb (always work weekends, coffee whenever)
+// and hold the Lever until burnout is near full. Simulated at about +32% vs
+// the normal thresholds with the Thermos owned (3 seeds, 2 game-hours).
+function thermosCrunch(game) {
+  return hasRelic(game, 'thermos');
+}
+
+function kernelPanic(G) {
+  return !!(G.s.weird && G.s.weird.key === 'kernelPanic');
+}
 const CLEAN_REPORT_RATIO = 0.35; // reality/perception below this = clean verdict
 const REACTION_MS = [600, 2200];
 const FAST_REACTION_MS = [250, 700]; // short-window prompts (clip it)
@@ -44,12 +61,20 @@ const FAST_REACTION_MS = [250, 700]; // short-window prompts (clip it)
 const PRIORITY_MIN_SECONDS_LEFT = 2.5;
 const TICKS_PER_SEC = 30;
 
-// Relic preference given what this script automates. Priority cases are
-// always ruled correctly, so the cat and little brother never trigger; only
-// clean reports are published, so the sharpie only adds leak risk; evaders
-// are not popped, so the mustache bin only makes them siphon more.
-const RELIC_RANK = ['thermos', 'ringLight', 'lunchbox', 'tally', 'phil', 'loadedDie', 'cat', 'littleBrother'];
+// Relic preference given what this script automates. Golden reports are
+// worth ~100% of production, so doubling them (glider monitors) is best.
+// Evaders are popped within seconds, so the mustache bin's extra siphon
+// never lands and each pop spawns a free golden report. The lunchbox fixes
+// golden reports at 242 s and ignores the golden upgrades, so it loses once
+// Anonymous Tip Line is owned. Priority cases are always ruled correctly, so
+// the cat and little brother rarely trigger. Never offered here: pager,
+// sharpie, loaded die (cursed/contraband come from other sources).
+const RELIC_RANK = ['gliderMonitors', 'mustacheBin', 'thermos', 'ringLight', 'noteJar', 'lunchbox', 'tally', 'phil', 'cat', 'littleBrother'];
+const RELIC_RANK_WITH_TIP_LINE = RELIC_RANK.filter(id => id !== 'lunchbox');
 const RELIC_NAMES = {
+  'The Glider Dev\'s Two 27" Monitors': 'gliderMonitors',
+  'Bin of Confiscated Fake Mustaches': 'mustacheBin',
+  'Jar of "pls unban" Notes': 'noteJar',
   "Kevin's Night-Shift Thermos": 'thermos',
   "The Streamer's Ring Light": 'ringLight',
   "Grandma's Lunchbox": 'lunchbox',
@@ -93,13 +118,18 @@ const LAUNCH_DROP_SECONDS = 1.5;
 // Notch controller. Wave heat = 100 × innocent share × f^1.5 × (1.3 − 0.6 ×
 // credibility/100) × a 0.7–1.3 roll; verdict tiers start at heat 5/15/35/70.
 // Tier 1 is a mild ×0.85 for 60 s; tier 2+ costs real production and
-// perception, so keep the worst-case roll under 15 with margin.
-const NOTCH_HEAT_HIGH = 12;
+// perception, so keep the worst-case roll under 15 with margin: a wave that
+// landed at heat 10 could have rolled up to 10 × 1.3 / 0.7 ≈ 18 on bad luck.
+const NOTCH_HEAT_HIGH = 10;
 const NOTCH_HEAT_LOW = 4;
 const HEAT_WORST_ROLL = 1.3;
 const AUDIT_KEEPS = 0.3; // a 5/5 audit scrubs about 75% of innocents
-const NOTCH_MIN_METER = 0.15; // too little pile to judge before this
-const NOTCH_STEP_MS = [4000, 8000]; // new pile only reflects the notch slowly
+const notchState = { pending: false, lastHeat: 0, lastTier: 0 };
+
+// An audit only scrubs innocents already in the pile, so run it just before
+// launch. (Run at ~25% charge, it left 4-27% innocents in waves, 3 of 9
+// TRENDING.) Launch waits for it when an audit is close.
+const AUDIT_AT_METER = 0.85;
 
 const PIZZA_REACTION_MS = [120, 320];
 const PIZZA_CUTS_EACH = 4;
@@ -173,7 +203,7 @@ function incidentCard(inc) {
 
 const ROUTINES = {
   shimmers(G) {
-    for (const el of document.querySelectorAll('#shimmers .shimmer:not(.wrath)')) {
+    for (const el of document.querySelectorAll('#shimmers .shimmer')) {
       if (ready('shimmer:' + shimmerKey(el), true)) {
         // Shimmers listen for pointerdown only.
         el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
@@ -189,8 +219,10 @@ const ROUTINES = {
   pizza(G) {
     const p = G.s.party;
     if (!p) {
-      const done = document.querySelector('.pzResult:not(.hidden) .pzDone');
-      if (!ready('pizza-done', !!done)) return null;
+      // The result card stays un-hidden inside the overlay after closing, so
+      // check that nothing above the button is hidden.
+      const done = document.querySelector('.pzResult .pzDone');
+      if (!ready('pizza-done', !!done && !done.closest('.hidden'))) return null;
       done.click();
       return 'pizza: back to banning';
     }
@@ -309,22 +341,34 @@ const ROUTINES = {
   },
 
   // Looser notch = meter fills faster (more ×3+ waves per hour) but adds more
-  // innocents, which raise the wave's heat and risk a bad verdict. Step
-  // looser while the pile's projected heat (after a perfect audit, worst-case
-  // roll) stays low; step stricter when it climbs toward the tier-2 line.
-  notch(G, enabled) {
-    const t = G.s.truth;
-    if (!t.pile || G.s.waveMeter < NOTCH_MIN_METER) return null;
-    const heat = projectedHeat(G, enabled);
+  // innocents, which raise the wave's heat and risk a bad verdict. The pile's
+  // innocent share is too noisy to steer on mid-fill (it measured 0.2 to 40
+  // within a minute), so steer on outcomes: one step per landed verdict.
+  // Stricter after heat above NOTCH_HEAT_HIGH, looser after heat below
+  // NOTCH_HEAT_LOW.
+  notch(G) {
+    const review = G.s.truth.review;
+    if (review) {
+      notchState.lastHeat = review.heat;
+      notchState.lastTier = review.tier;
+      notchState.pending = true;
+      return null;
+    }
+    if (!notchState.pending) return null;
     let dir = 0;
-    if (heat > NOTCH_HEAT_HIGH) dir = -1;
-    else if (heat < NOTCH_HEAT_LOW) dir = 1;
+    if (notchState.lastTier >= 2 || notchState.lastHeat > NOTCH_HEAT_HIGH) dir = -1;
+    else if (notchState.lastHeat < NOTCH_HEAT_LOW) dir = 1;
     let btn = null;
     if (dir < 0) btn = usable('#nPrev');
     if (dir > 0) btn = usable('#nNext');
-    if (!ready('notch:' + t.notch + ':' + dir, !!btn, NOTCH_STEP_MS)) return null;
+    if (!btn) {
+      notchState.pending = false;
+      return null;
+    }
+    if (!ready('notch', true)) return null;
     btn.click();
-    return `notch ${dir < 0 ? 'stricter' : 'looser'} (projected heat ${heat.toFixed(1)})`;
+    notchState.pending = false;
+    return `notch ${dir < 0 ? 'stricter' : 'looser'} (last wave heat ${notchState.lastHeat.toFixed(1)})`;
   },
 
   // The hammer clicker runs on its own faster loop (startHammer); nothing here.
@@ -340,15 +384,19 @@ const ROUTINES = {
     return 'clipped it';
   },
 
-  relics() {
+  relics(G) {
     const offer = document.querySelector('#relicOffer');
     const open = !!offer && !offer.classList.contains('hidden') && !!offer.querySelector('.offerCards');
     if (!ready('relic', open)) return null;
+    let order = RELIC_RANK;
+    if (G.s.upgradesBought.has('event:0')) order = RELIC_RANK_WITH_TIP_LINE;
     let best = null;
     let bestRank = Infinity;
+    const offered = [];
     for (const card of offer.querySelectorAll('.offerCard')) {
-      const id = RELIC_NAMES[card.querySelector('.offerName')?.textContent.trim()];
-      const rank = RELIC_RANK.indexOf(id);
+      const name = card.querySelector('.offerName')?.textContent.trim() ?? '?';
+      offered.push(name);
+      const rank = order.indexOf(RELIC_NAMES[name]);
       if (rank >= 0 && rank < bestRank) {
         best = card;
         bestRank = rank;
@@ -358,7 +406,8 @@ const ROUTINES = {
     const btn = best ?? offer.querySelector('.offerFoot button[data-i="3"]');
     if (!btn) return null;
     btn.click();
-    return best ? 'relic: ' + RELIC_RANK[bestRank] : 'relic: left in the bag';
+    if (best) return 'relic: ' + order[bestRank];
+    return 'relic: left in the bag (offered: ' + offered.join(', ') + ')';
   },
 
   priority(G, enabled) {
@@ -396,10 +445,11 @@ const ROUTINES = {
     return null;
   },
 
-  weekend(G) {
+  weekend(G, enabled, game) {
     const inc = G.s.incidents.find(i => i.key === 'weekend' && i.choice && i.choice.chosen === undefined);
     if (!ready('weekend:' + (inc ? inc.id : ''), !!inc)) return null;
-    const work = G.s.staff.burnout <= WEEKEND_WORK_MAX_BURNOUT;
+    // With the Thermos, burnout is fuel for the Lever: always crunch.
+    const work = thermosCrunch(game) || G.s.staff.burnout <= WEEKEND_WORK_MAX_BURNOUT;
     const btn = incidentCard(inc)?.querySelectorAll('.incBtn')[work ? 0 : 1];
     if (!usable(btn)) return null;
     btn.click();
@@ -421,9 +471,15 @@ const ROUTINES = {
     return null;
   },
 
-  coffee(G) {
+  // Coffee is ×1.5 on humans for 60 s. During Kernel Panic humans are the only
+  // ones working, and multipliers stack, so drink then even if tired. With the
+  // Thermos, the +8 burnout is fuel, so drink whenever it's ready.
+  coffee(G, enabled, game) {
     const st = G.s.staff;
-    const ok = st.burnout < COFFEE_MAX_BURNOUT && !st.week.weekend && st.lever.party <= 0;
+    let maxBurnout = COFFEE_MAX_BURNOUT;
+    if (kernelPanic(G)) maxBurnout = 90;
+    if (thermosCrunch(game)) maxBurnout = 100;
+    const ok = st.burnout < maxBurnout && !st.week.weekend && st.lever.party <= 0;
     const btn = usable('#coffeeBtn');
     if (!ready('coffee', ok && !!btn)) return null;
     btn.click();
@@ -437,11 +493,41 @@ const ROUTINES = {
     return 'called the hammer';
   },
 
-  lever(G) {
+  // The party zeroes humans for 45 s and runs tech ×3 (×(3 + burnout/10) up
+  // to ×13 with the Thermos), then resets burnout. Never during Kernel Panic
+  // (tech is down, humans are all that's working). With the Thermos, wait for
+  // near-full burnout. During a production boost, pull a little early so the
+  // party multiplies into it.
+  lever(G, enabled, game) {
     const btn = usable('#leverBtn');
-    if (!ready('lever', !!btn && G.s.staff.burnout >= LEVER_AT_BURNOUT)) return null;
+    let at = LEVER_AT_BURNOUT;
+    if (thermosCrunch(game)) at = THERMOS_LEVER_AT;
+    if (productionBoost(G) >= 2) at -= 15;
+    const ok = !!btn && !kernelPanic(G) && G.s.staff.burnout >= at;
+    if (!ready('lever', ok)) return null;
     btn.click();
-    return 'pulled the lever';
+    return `pulled the lever (burnout ${Math.round(G.s.staff.burnout)})`;
+  },
+
+  // Overlays that only need dismissing: ZABURUFF's judgment scroll, the
+  // Kernel Panic blue screen, and the welcome-back card.
+  popups() {
+    const scroll = document.querySelector('.zsClose')?.parentElement;
+    if (scroll && !scroll.classList.contains('hidden') && ready('popup:scroll', true)) {
+      scroll.click();
+      return 'closed judgment scroll';
+    }
+    const bsod = document.querySelector('.bsodInner')?.parentElement;
+    if (bsod && !bsod.classList.contains('hidden') && ready('popup:bsod', true)) {
+      bsod.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      return 'closed blue screen';
+    }
+    const back = [...document.querySelectorAll('.wcBtn[data-a="go"]')].find(b => /BACK TO BANNING/i.test(b.textContent));
+    if (back && !back.closest('.hidden') && ready('popup:welcome', true)) {
+      back.click();
+      return 'closed welcome card';
+    }
+    return null;
   },
 
   coinLock(G) {
@@ -475,7 +561,8 @@ const ROUTINES = {
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
-    if (!ready('audit-start', !!btn && !(pile && pile.audited))) return null;
+    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER;
+    if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
     btn.click();
     return 'audit started';
   },
@@ -497,11 +584,16 @@ const ROUTINES = {
     const pile = truth.pile;
     const btn = usable('#waveBtn');
     const charged = !!btn && G.s.waveMeter >= 1;
-    const auditSoon = enabled.audit && G.s.buildings.moderator.amount > 0 &&
-      !(pile && pile.audited) && truth.auditCd / TICKS_PER_SEC <= AUDIT_WAIT_SECONDS;
-    if (!ready('wave', charged && !auditSoon)) return null;
+    const auditOpen = !!(truth.audit && truth.audit.cases);
+    const auditSoon = auditOpen || (enabled.audit && G.s.buildings.moderator.amount > 0 &&
+      !(pile && pile.audited) && truth.auditCd / TICKS_PER_SEC <= AUDIT_WAIT_SECONDS);
+    // The wave's ×3+ multiplies into an active boost, so don't wait for the
+    // audit then (unless one is already open and nearly done).
+    const boost = productionBoost(G);
+    const waitForAudit = auditOpen || (auditSoon && boost < 2);
+    if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
     btn.click();
-    return 'launched ban wave';
+    return boost >= 2 ? `launched ban wave into a ×${boost.toFixed(1)} boost` : 'launched ban wave';
   },
 
   // Work the response cards in dependency order, fastest path, no playbook
@@ -527,28 +619,110 @@ const ROUTINES = {
   },
 };
 
-// Banhammer clicker. The game accepts one click per tick and at most 20 per
-// second, and flags more than 15 in a second as an auto-clicker. Every click
-// is a recorded input, so stay well under that and stop when clicks stop
-// mattering (late game, unless a priority case needs evidence).
-export const HAMMER_CPS = 8;
+// Banhammer clicker, humanized. The game accepts one click per tick and at
+// most 20 per second, and flags more than 15 in a second as an auto-clicker.
+// Every click is a recorded input, and /api/ping reports total clicks and
+// run seconds, so the long-run rate should look like a person: bursts of
+// 4-9 clicks/s with irregular gaps, short pauses, and occasional breaks.
+// During boosts (click multipliers, or big production multipliers when clicks
+// scale with production) it clicks frantically, like a person would.
+export const HAMMER_CPS = 4; // long-run average, used to value click upgrades
 const HAMMER_MIN_SHARE = 0.01; // clicks must add at least 1% of passive income
+const MAX_CLICKS_PER_SEC = 13;
+const BURST_CPS = [4, 9];
+const BOOST_CPS = [10, 13];
+const BURST_SECONDS = [6, 40];
+const PAUSE_SECONDS = [1.5, 12];
+const BREAK_CHANCE = 0.08; // per pause: a 1-4 minute break instead
+const BREAK_SECONDS = [60, 240];
+
+const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
+
+// Log-normal gap around the target rate: mostly near it, sometimes long.
+function gapMs(cps) {
+  const z = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  return Math.max(40, (1000 / cps) * Math.exp(0.35 * z - 0.06));
+}
 
 export function startHammer(game, getSettings) {
+  const recent = [];
+  let phaseEnd = 0;
+  let clicking = false;
+  let cps = 0;
   const loop = () => {
     const settings = getSettings();
-    if (settings.auto && settings.ops.hammer && hammerWorthwhile(game.G)) clickHammer();
-    const jitter = 0.7 + Math.random() * 0.6;
-    setTimeout(loop, (1000 / HAMMER_CPS) * jitter);
+    const G = game.G;
+    const now = performance.now();
+    const boosted = !G.ascending && clickBoost(G) >= 2;
+    let delay = 250;
+    if (settings.auto && settings.ops.hammer && hammerWorthwhile(G, boosted)) {
+      if (boosted) {
+        // Drop any pause: a person sees ×777 and starts mashing.
+        clicking = true;
+        cps = rand(BOOST_CPS);
+        phaseEnd = now + 1000;
+      } else if (now >= phaseEnd) {
+        clicking = !clicking;
+        if (clicking) {
+          cps = rand(BURST_CPS);
+          phaseEnd = now + rand(BURST_SECONDS) * 1000;
+        } else {
+          const brk = Math.random() < BREAK_CHANCE;
+          phaseEnd = now + rand(brk ? BREAK_SECONDS : PAUSE_SECONDS) * 1000;
+        }
+      }
+      if (clicking) {
+        while (recent.length && now - recent[0] > 1000) recent.shift();
+        if (recent.length < MAX_CLICKS_PER_SEC) {
+          clickHammer();
+          recent.push(now);
+        }
+        delay = gapMs(cps);
+      }
+    }
+    setTimeout(loop, delay);
   };
   loop();
 }
 
-function hammerWorthwhile(G) {
+// How much more a click is worth right now than without buffs: click
+// multipliers directly, and production multipliers through the mouse
+// upgrades' "+1% of bans/sec per click" (only if that share of a click
+// dominates). Kernel Panic, golden ×7, strike ×4, speedhack ×3 all count.
+// Weird events where clicking is the whole point:
+//   honeypot (30 s): each click is a sale paying clickPower×3 + 1 s of production
+//   streamerMode (45 s): hype multiplies clicks up to ×21 and drains when idle
+//   lagSwitch (12 s): clicks are queued and paid out with 50% interest
+const CLICK_EVENTS = new Set(['honeypot', 'streamerMode', 'lagSwitch']);
+
+export function clickBoost(G) {
+  if (G.s.weird && CLICK_EVENTS.has(G.s.weird.key)) return Infinity;
+  let click = 1;
+  let bps = 1;
+  for (const b of G.s.buffs) {
+    if (b.bad) continue;
+    if (b.multClick > 1) click *= b.multClick;
+    if (b.multBps > 1) bps *= b.multBps;
+  }
+  const mouse = [...G.s.upgradesBought].filter(id => id.startsWith('mouse:')).length;
+  const bpsPart = G.bps > 0 ? (G.bps * 0.01 * mouse) / Math.max(1e-9, G.clickPower) : 0;
+  return click * (1 + bpsPart * (bps - 1));
+}
+
+function hammerWorthwhile(G, boosted) {
   if (G.ascending) return false;
+  if (boosted) return true;
   const cur = G.s.priority && G.s.priority.cur;
   if (cur && !cur.verdict && cur.hits < cur.need) return true;
   return G.clickPower * HAMMER_CPS >= HAMMER_MIN_SHARE * G.bps;
+}
+
+// Total production multiplier from active good buffs (what a wave, coffee
+// run, or Lever party would multiply into).
+export function productionBoost(G) {
+  let m = 1;
+  for (const b of G.s.buffs) if (!b.bad && b.multBps > 1) m *= b.multBps;
+  return m;
 }
 
 function clickHammer() {
@@ -584,7 +758,8 @@ export function runOps(game, enabled) {
   const G = game.G;
   if (G.ascending) return null;
   for (const { key } of OPS) {
-    if (!enabled[key]) continue;
+    // Experiment flags share OPS but have no routine of their own.
+    if (!enabled[key] || !ROUTINES[key]) continue;
     try {
       const did = ROUTINES[key](G, enabled, game);
       if (did) return did;

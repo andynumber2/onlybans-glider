@@ -9,6 +9,11 @@
 //   rate()       -> number          bans/sec in the current sim state
 //   apply(item)  / undo()
 //
+// An item may be a bundle ({ type: 'bundle', parts: [...] }): several
+// purchases valued and applied as one move (e.g. "buy 18 more of X so its
+// next ×2 upgrade unlocks, then buy that upgrade"). sim.apply/undo/price
+// handle bundles; this file only needs to know how to execute them.
+//
 // Objective: maximize  bank(H) + rate(H) * H.
 // The tail term values production for one more horizon, so a purchase is worth
 // making when it pays back within roughly (2H - time until affordable).
@@ -23,21 +28,52 @@ export function plan(sim, { bank, horizon, depth = 3, beam = 5 }) {
   // Phase 1: while the best-scoring item is affordable now and pays back
   // within the objective's break-even (2H), buy it. Late game this can be
   // dozens of purchases, which a depth-limited search would never reach.
+  // A bundle that isn't affordable yet is still worth working toward: buy its
+  // next part now if that part is affordable (the rest stays ranked next time).
   const nowSteps = [];
   let nowBank = bank;
+  let applied = 0;
   try {
     let top = ranked[0];
-    while (top && top.wait === 0 && top.payback < 2 * horizon && nowSteps.length < MAX_NOW_BUYS) {
-      sim.apply(top.item);
-      nowBank -= top.price;
-      nowSteps.push({ item: top.item, price: top.price, at: 0, gain: top.gain, rateAfter: top.rateAfter });
-      top = rankCandidates(sim, { t: 0, bank: nowBank, rate: top.rateAfter }, horizon)[0];
+    while (top && top.payback < 2 * horizon && nowSteps.length < MAX_NOW_BUYS) {
+      let parts = [top.item];
+      if (top.item.type === 'bundle') parts = top.wait === 0 ? top.item.parts : top.item.parts.slice(0, 1);
+      else if (top.wait > 0) break;
+      const rateBefore = sim.rate();
+      let bought = 0;
+      for (const part of parts) {
+        const price = sim.price(part);
+        if (price > nowBank) break;
+        sim.apply(part);
+        applied++;
+        bought++;
+        nowBank -= price;
+        nowSteps.push({ item: part, price, at: 0, gain: 0, rateAfter: 0, via: top.item.label });
+      }
+      if (!bought) break;
+      const rateAfter = sim.rate();
+      const last = nowSteps[nowSteps.length - 1];
+      last.gain = rateAfter - rateBefore;
+      last.rateAfter = rateAfter;
+      top = rankCandidates(sim, { t: 0, bank: nowBank, rate: rateAfter }, horizon)[0];
     }
     const ahead = lookahead(sim, nowBank, horizon, depth, beam);
-    return { rate: rateStart, path: [...nowSteps, ...ahead], candidates: ranked };
+    return { rate: rateStart, path: [...nowSteps, ...ahead.flatMap(expandStep)], candidates: ranked };
   } finally {
-    for (let i = 0; i < nowSteps.length; i++) sim.undo();
+    for (let i = 0; i < applied; i++) sim.undo();
   }
+}
+
+// Lookahead steps can be bundles; show and execute them as their parts.
+function expandStep(step) {
+  if (step.item.type !== 'bundle') return [step];
+  return step.item.parts.map((part, i) => ({
+    ...step,
+    item: part,
+    via: step.item.label,
+    price: i === 0 ? step.price : 0,
+    gain: i === step.item.parts.length - 1 ? step.gain : 0,
+  }));
 }
 
 // Phase 2: depth-limited search over future purchases from the current state.

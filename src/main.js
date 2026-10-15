@@ -1,6 +1,7 @@
 // Entry point: wait for the game, bind to it, replan on a timer.
 
 const REPLAN_MS = 2000;
+const PLANNER_CPU_SHARE = 0.05;
 const BUY_NOW_ROWS = 6;
 const OPS_MS = 400;
 const STATS_MS = 1000;
@@ -40,18 +41,28 @@ async function start() {
     if (!game || game.G.ascending) return;
     // A hidden tab only matters for display; auto mode keeps buying.
     if (document.hidden && !ui.settings.auto) return;
-    let result;
+    let out;
+    const t0 = performance.now();
     try {
-      result = render(game, ui, autoBought);
+      out = render(game, ui, autoBought);
     } catch (e) {
       ui.render(`<div class="err">Planner error: ${esc(e.stack ?? e.message)}</div>`);
       return;
     }
-    if (ui.settings.auto) autoBought += await autoBuy(game, result.path);
+    const plannerMs = performance.now() - t0;
+    if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities);
+    return plannerMs;
   }
 
   await rebind();
-  setInterval(tick, REPLAN_MS);
+  // Replan on a CPU budget: the planner runs on the game's main thread, so
+  // wait at least PLANNER_CPU_SHARE⁻¹ × its own run time between replans.
+  // Only the planner's own compute counts, not the auto-buyer's click pauses.
+  const replanLoop = async () => {
+    const spent = (await tick()) ?? 0;
+    setTimeout(replanLoop, Math.max(REPLAN_MS, spent / PLANNER_CPU_SHARE));
+  };
+  replanLoop();
   startHammer({ get G() { return game ? game.G : { ascending: true }; } }, () => ui.settings);
   setInterval(() => {
     if (!game || !ui.settings.auto) return;
@@ -138,17 +149,31 @@ function render(game, ui, autoBought) {
   }
   html += `</table>`;
 
+  const utilities = utilityUpgrades(game, { clicksPerSec });
+  if (utilities.length) {
+    html += `<h4>Utility upgrades (bought at ≤${UTILITY_MAX_SECONDS / 60} min of income)</h4><table>`;
+    for (const u of utilities.slice(0, 6)) {
+      const secs = result.rate > 0 ? u.price / result.rate : Infinity;
+      html += `<tr><td title="${esc(u.def.desc ?? '')}">${esc(iconText(u.def.icon))} ${esc(u.def.name)}</td>
+        <td>${fmtNum(u.price)}</td><td>${fmtTime(secs)} of income</td></tr>`;
+    }
+    html += `</table>`;
+  }
+
   const special = specialUpgrades(game);
   if (special.length) {
-    html += `<h4>Not planned (arms race)</h4>`;
+    html += `<h4>Arms race (auto: escalate x3; truce only near review bomb; no détente)</h4>`;
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  html += `<div class="muted" style="margin-top:6px">rate ${fmtNum(result.rate)}/s (no buffs) · bank ${fmtNum(bank)}
+  html += `<div class="muted" style="margin-top:6px">rate ${fmtNum(result.rate)}/s (avg incl. golden reports + waves, no buffs) · bank ${fmtNum(bank)}
     · ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
   if (settings.auto) html += `<div class="muted">auto: ${autoBought} bought this session</div>`;
+  if (game.build !== ANALYZED_BUILD) {
+    html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;
+  }
   ui.render(html);
-  return result;
+  return { result, utilities };
 }
 
 // Everything affordable right now, merged per item, in first-purchase order.

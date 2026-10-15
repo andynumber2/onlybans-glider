@@ -1,0 +1,169 @@
+// Offline simulator: runs the real game bundle in Node under jsdom with a fake
+// clock, optionally with the Glider userscript injected. Nothing touches the
+// network: fetch is stubbed and the bundle is loaded from research/site/.
+//
+// One process = one simulation (the game module is a singleton).
+import { JSDOM } from 'jsdom';
+import FakeTimers from '@sinonjs/fake-timers';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const SITE = resolve('research/site');
+
+// Small seeded PRNG (mulberry32) so runs are repeatable.
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function define(name, value) {
+  Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+}
+
+// Anything the bundle touches that jsdom or Node lacks.
+function installBrowserGlobals(w, clock) {
+  const passthrough = [
+    'window', 'document', 'location', 'history', 'localStorage', 'sessionStorage', 'navigator',
+    'HTMLElement', 'HTMLCanvasElement', 'HTMLImageElement', 'Element', 'Node', 'Text', 'DocumentFragment',
+    'Event', 'MouseEvent', 'KeyboardEvent', 'CustomEvent', 'FocusEvent', 'getComputedStyle', 'DOMParser',
+    'Image', 'MutationObserver', 'NodeList', 'HTMLButtonElement', 'HTMLInputElement', 'SVGElement',
+  ];
+  for (const k of passthrough) define(k, k === 'window' ? w : w[k]);
+
+  // Timers: one fake clock drives Node globals and the jsdom window alike.
+  for (const k of ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame']) {
+    w[k] = clock[k].bind(clock);
+  }
+  Object.defineProperty(w, 'performance', { value: globalThis.performance, configurable: true });
+  Object.defineProperty(w, 'Date', { value: globalThis.Date, configurable: true, writable: true });
+
+  class PointerEvent extends w.MouseEvent {
+    constructor(type, init = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 1;
+    }
+  }
+  define('PointerEvent', PointerEvent);
+  w.PointerEvent = PointerEvent;
+
+  const noop = () => {};
+  const stubObserver = class { observe() {} unobserve() {} disconnect() {} };
+  define('IntersectionObserver', stubObserver);
+  define('ResizeObserver', stubObserver);
+  w.IntersectionObserver = stubObserver;
+  w.ResizeObserver = stubObserver;
+  w.matchMedia = () => ({ matches: false, addEventListener: noop, removeEventListener: noop, addListener: noop });
+  define('matchMedia', w.matchMedia);
+  w.scrollTo = noop;
+  define('scrollTo', noop);
+
+  // Canvas: every method is a no-op; measureText returns a width.
+  const ctx2d = new Proxy({}, {
+    get(target, prop) {
+      if (prop === 'measureText') return () => ({ width: 10 });
+      if (prop === 'getImageData' || prop === 'createImageData') return () => ({ data: new Uint8ClampedArray(4) });
+      if (prop === 'createLinearGradient' || prop === 'createRadialGradient' || prop === 'createPattern') {
+        return () => ({ addColorStop: noop });
+      }
+      if (prop in target) return target[prop];
+      return noop;
+    },
+    set(target, prop, value) {
+      target[prop] = value;
+      return true;
+    },
+  });
+  w.HTMLCanvasElement.prototype.getContext = () => ctx2d;
+  w.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,';
+  // No layout engine: give every element the same box so click geometry
+  // (hammer, evaders) is self-consistent.
+  w.Element.prototype.getBoundingClientRect = () => ({
+    left: 0, top: 0, right: 400, bottom: 700, width: 400, height: 700, x: 0, y: 0,
+  });
+
+  // Audio: silent.
+  const audioNode = new Proxy(function () {}, {
+    get: (t, p) => {
+      if (p === Symbol.toPrimitive || p === 'valueOf') return () => 0;
+      if (p === 'connect') return () => audioNode;
+      if (p === 'currentTime') return clock.now / 1000;
+      return audioNode;
+    },
+    apply: () => audioNode,
+    construct: () => audioNode,
+    set: () => true,
+  });
+  define('AudioContext', class { constructor() { return audioNode; } });
+  w.AudioContext = globalThis.AudioContext;
+  w.webkitAudioContext = globalThis.AudioContext;
+
+  // Network: never leaves the machine.
+  const offline = () => Promise.reject(new Error('offline simulator'));
+  define('fetch', offline);
+  w.fetch = offline;
+  w.navigator.sendBeacon = () => true;
+  define('indexedDB', undefined);
+}
+
+export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), userscript = null, settings = null } = {}) {
+  const html = await readFile(resolve(SITE, 'index.html'), 'utf8');
+  const bundleName = html.match(/assets\/(index-[\w-]+\.js)/)[1];
+  // Serve it from an assets/ path like the live site, which is how the
+  // userscript recognizes the game's script tag.
+  const assetPath = resolve(SITE, 'assets', bundleName);
+  await mkdir(resolve(SITE, 'assets'), { recursive: true });
+  await copyFile(resolve(SITE, bundleName), assetPath);
+  const bundleUrl = pathToFileURL(assetPath).href;
+
+  // Node has no requestAnimationFrame; give it one so the clock can fake it.
+  define('requestAnimationFrame', cb => setTimeout(() => cb(performance.now()), 16));
+  define('cancelAnimationFrame', id => clearTimeout(id));
+  const clock = FakeTimers.withGlobal(globalThis).install({
+    now: startMs,
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance',
+      'requestAnimationFrame', 'cancelAnimationFrame'],
+  });
+  Math.random = seeded(seed);
+
+  const dom = new JSDOM(html.replace(/<script[^>]*src="[^"]*"[^>]*><\/script>/g, ''), {
+    url: 'https://onlybans.wtf/',
+    pretendToBeVisual: true,
+  });
+  const w = dom.window;
+  installBrowserGlobals(w, clock);
+  w.Math.random = Math.random;
+
+  // The userscript finds the bundle through this tag and re-imports its URL.
+  const tag = w.document.createElement('script');
+  tag.type = 'module';
+  tag.setAttribute('src', bundleUrl);
+  w.document.head.appendChild(tag);
+
+  if (settings) w.localStorage.setItem('onlybans-glider-settings', JSON.stringify(settings));
+  const mod = await import(bundleUrl);
+  const logic = Object.values(mod).find(v => v && typeof v.calculateGains === 'function');
+
+  if (userscript) {
+    const text = await readFile(userscript, 'utf8');
+    (0, eval)(text);
+  }
+
+  return {
+    clock, window: w, logic, G: logic.G, bundleName,
+    // Advance game time in chunks, letting promises settle between them.
+    async run(seconds, onSecond) {
+      for (let s = 0; s < seconds; s++) {
+        clock.tick(1000);
+        await new Promise(r => setImmediate(r));
+        if (onSecond) onSecond(s);
+      }
+    },
+  };
+}

@@ -18,10 +18,13 @@ export async function bindGame(win) {
   let buildings = null;
   let upgrades = null;
   let dupe = null;
+  let relics = null;
   for (const val of Object.values(mod)) {
     if (val && typeof val === 'object' && typeof val.calculateGains === 'function' && val.G) logic = val;
     // Dupe-outbreak minigame state: optional, automation skips it if absent.
     if (val && typeof val === 'object' && 'answer' in val && Array.isArray(val.deck) && Array.isArray(val.done)) dupe = val;
+    // Relic state (owned list, counters, current offer): optional.
+    if (val && typeof val === 'object' && Array.isArray(val.owned) && 'ctr' in val && 'offer' in val) relics = val;
     if (Array.isArray(val) && val.length && typeof val[0] === 'object' && val[0]) {
       if ('baseCost' in val[0] && 'baseBps' in val[0]) buildings = val;
       if (typeof val[0].unlock === 'function' && 'kind' in val[0]) upgrades = val;
@@ -33,30 +36,83 @@ export async function bindGame(win) {
   if (!upgrades) missing.push('upgrade table');
   if (missing.length) throw new Error('could not find: ' + missing.join(', '));
 
-  return { logic, G: logic.G, buildings, upgrades, dupe, build: script.src.split('/').pop() };
+  return { logic, G: logic.G, buildings, upgrades, dupe, relics, build: script.src.split('/').pop() };
 }
 
 // Runs fn(sim) with the live state temporarily mutated, then restores it.
 // Synchronous on purpose: the game loop cannot interleave with us.
-export function withSandbox(game, { clicksPerSec = 0 } = {}, fn) {
+// Bundles look this many units ahead for a department's next unlock.
+const BUNDLE_MAX_UNITS = 60;
+
+export function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
   const { logic, G, buildings, upgrades } = game;
   const s = G.s;
   const savedBuffs = s.buffs;
   const undoStack = [];
   // Temporary buffs are excluded so advice doesn't swing during golden events.
   s.buffs = [];
+  // Upgrades tied to one department (tier doublers, synergies), by building.
+  const byBuilding = new Map();
+  for (const def of upgrades) {
+    if (!def.building || SPECIAL_KINDS.has(def.kind)) continue;
+    if (!byBuilding.has(def.building)) byBuilding.set(def.building, []);
+    byBuilding.get(def.building).push(def);
+  }
+  const bundleCache = new Map();
+
+  // "Buy k more of this department, then the upgrades that unlocks": found
+  // by probing each upgrade's own unlock condition at higher counts, so the
+  // thresholds (1, 5, 25, 50, ... and 15 for synergies) come from the game.
+  function bundleFor(def) {
+    const owned = s.buildings[def.id].amount;
+    const key = def.id + ':' + owned + ':' + s.upgradesBought.size;
+    if (bundleCache.has(key)) return bundleCache.get(key);
+    let result = null;
+    const ctx = logic.ctx();
+    const locked = (byBuilding.get(def.id) ?? []).filter(u =>
+      !s.upgradesBought.has(u.id) && !s.upgradesUnlocked.has(u.id) && !safeUnlock(u, ctx));
+    for (let n = owned + 2; locked.length && n <= owned + BUNDLE_MAX_UNITS; n++) {
+      const probe = { ...ctx, owned: id => (id === def.id ? n : ctx.owned(id)) };
+      const opens = locked.filter(u => safeUnlock(u, probe));
+      if (!opens.length) continue;
+      const parts = [];
+      for (let i = owned; i < n; i++) parts.push({ type: 'building', def });
+      for (const u of opens) parts.push({ type: 'upgrade', def: u });
+      result = {
+        type: 'bundle', parts, def,
+        label: `${def.name} ×${n - owned} → ${opens.map(u => u.name).join(', ')}`,
+      };
+      break;
+    }
+    bundleCache.set(key, result);
+    return result;
+  }
 
   const sim = {
     rate() {
       logic.calculateGains();
-      return G.rawBps + clicksPerSec * G.clickPower;
+      return (G.rawBps + clicksPerSec * G.clickPower) * (1 + goldenShare(s) + waveShare(s));
     },
     price(item) {
       if (item.type === 'building') return logic.buildingPrice(item.def.id, 1);
+      if (item.type === 'bundle') {
+        let total = 0;
+        for (const part of item.parts) {
+          total += sim.price(part);
+          sim.apply(part);
+        }
+        for (let i = 0; i < item.parts.length; i++) sim.undo();
+        return total;
+      }
       return logic.upgradePrice(item.def);
     },
     apply(item) {
-      if (item.type === 'building') {
+      if (item.type === 'bundle') {
+        const mark = undoStack.length;
+        for (const part of item.parts) sim.apply(part);
+        const undos = undoStack.splice(mark).reverse();
+        undoStack.push(() => { for (const u of undos) u(); });
+      } else if (item.type === 'building') {
         s.buildings[item.def.id].amount++;
         undoStack.push(() => { s.buildings[item.def.id].amount--; });
       } else {
@@ -68,13 +124,20 @@ export function withSandbox(game, { clicksPerSec = 0 } = {}, fn) {
       undoStack.pop()();
     },
     candidates() {
-      const out = buildings.filter(def => buildingVisible(def, s)).map(def => ({ type: 'building', def }));
+      const visible = buildings.filter(def => buildingVisible(def, s));
+      const out = visible.map(def => ({ type: 'building', def }));
       const ctx = logic.ctx();
       for (const def of upgrades) {
         if (SPECIAL_KINDS.has(def.kind)) continue;
         if (s.upgradesBought.has(def.id)) continue;
         if (!s.upgradesUnlocked.has(def.id) && !safeUnlock(def, ctx)) continue;
         out.push({ type: 'upgrade', def });
+      }
+      if (bundles) {
+        for (const def of visible) {
+          const b = bundleFor(def);
+          if (b) out.push(b);
+        }
       }
       return out;
     },
@@ -94,6 +157,67 @@ export function withSandbox(game, { clicksPerSec = 0 } = {}, fn) {
 function buildingVisible(def, s) {
   const b = s.buildings[def.id];
   return def.index === 0 || b.amount > 0 || b.highest > 0 || s.bansEarned >= def.baseCost;
+}
+
+// Average income from clicking every golden report, as a fraction of
+// production. From the game's spawn timer and outcome pools (stationary
+// outcome mix estimated by simulation; bustedProvider assumes a bank of
+// ~50 min of production):
+//   - mean gap between reports: 446.6 s, halved by event:0 and by event:1
+//   - expected payout per normal report: 455 s of production; 707 s when
+//     event:2 doubles buff durations
+//   - red ("wrath") reports: 721 s (1267 s with event:2); a report is red
+//     with chance armsStage/3
+const GOLDEN_GAP_SECONDS = 446.6;
+const GOLDEN_EV = { normal: 455, wrath: 721 };
+const GOLDEN_EV_LONG_BUFFS = { normal: 707, wrath: 1267 };
+
+export function goldenShare(s) {
+  const owns = id => s.upgradesBought.has(id);
+  let gap = GOLDEN_GAP_SECONDS;
+  if (owns('event:0')) gap *= 0.5;
+  if (owns('event:1')) gap *= 0.5;
+  let ev = GOLDEN_EV;
+  if (owns('event:2')) ev = GOLDEN_EV_LONG_BUFFS;
+  const w = armsStage(s) / 3;
+  return ((1 - w) * ev.normal + w * ev.wrath) / gap;
+}
+
+// Average income from launching every ban wave at 100%: ×3 for 30 s is 60 s
+// of production per wave; the meter fills in 240/(1 + 0.04 × departments) s,
+// 30% faster with the Dashboard tool.
+export function waveShare(s) {
+  let depts = 0;
+  for (const b of Object.values(s.buildings)) if (b.amount > 0) depts++;
+  let fill = 240 / (1 + 0.04 * depts);
+  if (s.upgradesBought.has('tool:dashboard')) fill /= 1.3;
+  return 60 / fill;
+}
+
+export function armsStage(s) {
+  const ar = s.armsRace;
+  if (!ar || ar.detente || ar.truceT > 0) return 0;
+  return ar.stage;
+}
+
+// Unlocked, unbought upgrades that add nothing to production as calculated
+// (golden report frequency, audit tools, etc.). The planner can't value
+// these, so they're bought by a price rule instead (see auto.js).
+export function utilityUpgrades(game, opts) {
+  const s = game.G.s;
+  return withSandbox(game, { ...opts, bundles: false }, sim => {
+    const base = sim.rate();
+    const out = [];
+    for (const def of game.upgrades) {
+      if (SPECIAL_KINDS.has(def.kind) || !s.upgradesUnlocked.has(def.id) || s.upgradesBought.has(def.id)) continue;
+      const item = { type: 'upgrade', def };
+      sim.apply(item);
+      const gain = sim.rate() - base;
+      sim.undo();
+      if (!(gain > base * 1e-9)) out.push({ def, price: game.logic.upgradePrice(def) });
+    }
+    return out.sort((a, b) => a.price - b.price);
+  });
 }
 
 // Bans/sec regained if the given buff (e.g. a stopped department) ended now.
@@ -130,6 +254,7 @@ export function itemKey(item) {
 }
 
 export function itemLabel(item) {
+  if (item.type === 'bundle') return `${iconText(item.def.icon)} ${item.label}`.trim();
   return `${iconText(item.def.icon)} ${item.def.name}`.trim();
 }
 

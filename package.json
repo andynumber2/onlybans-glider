@@ -5,9 +5,14 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "test": "node --test test/*.test.js",
-    "e2e": "npm run build && node scripts/e2e.mjs"
+    "e2e": "npm run build && node scripts/e2e.mjs",
+    "sim": "npm run build && node scripts/sim/run.mjs",
+    "experiments": "npm run build && node scripts/sim/experiments.mjs",
+    "progress": "node scripts/sim/progress.mjs"
   },
   "devDependencies": {
+    "@sinonjs/fake-timers": "^13.0.5",
+    "jsdom": "^25.0.1",
     "playwright": "^1.58.2"
   }
 }

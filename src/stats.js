@@ -47,6 +47,7 @@ export async function createStats() {
   let dirty = false;
   let lastSnapshot = 0;
   let pendingWave = null;
+  let preLaunch = {};
 
   const persist = () => {
     if (!dirty) return;
@@ -82,14 +83,18 @@ export async function createStats() {
           burnout: s.staff.burnout, notch: t.notch, meter: s.waveMeter, waves: s.wavesLaunched,
         }, MAX_SNAPSHOTS);
       }
-      // A review exists from launch until the verdict lands.
+      // A review exists from launch until the verdict lands. Launch resets the
+      // pile, so conditions are captured on every tick before launch.
       const review = t.review;
-      if (review && !pendingWave) {
-        pendingWave = {
-          n: s.wavesLaunched, launchedAt: now, f: review.f, notch: t.notch, cred: t.cred,
-          audited: !!(t.pile && t.pile.audited), projectedHeat,
-          perception: s.perception, reality: s.reality,
+      if (!review) {
+        preLaunch = {
+          notch: t.notch, cred: t.cred, meter: s.waveMeter, audited: !!(t.pile && t.pile.audited),
+          innocentShare: t.pile ? t.pile.inn / Math.max(0.001, s.waveMeter) : null,
+          projectedHeat, perception: s.perception, reality: s.reality,
         };
+      }
+      if (review && !pendingWave) {
+        pendingWave = { n: s.wavesLaunched, launchedAt: now, f: review.f, ...preLaunch };
       }
       if (review && pendingWave) {
         pendingWave.tier = review.tier;

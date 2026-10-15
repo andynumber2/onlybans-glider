@@ -111,6 +111,69 @@ test('buy-now phase skips items that do not pay back within 2H', () => {
   assert.equal(r.path.length, 0);
 });
 
+// Sim where owning 10 of "a" unlocks a ×10 upgrade: one-at-a-time greedy
+// prefers "b", but the bundle "a up to 10 + upgrade" pays back far faster.
+function thresholdSim() {
+  const owned = { a: 8, b: 0 };
+  const bought = new Set();
+  const stack = [];
+  const a = { id: 'a', cost: 100, bps: 1 };
+  const b = { id: 'b', cost: 100, bps: 1.2 };
+  const up = { id: 'x10', price: 50 };
+  const sim = {
+    candidates() {
+      const out = [{ type: 'building', def: a }, { type: 'building', def: b }];
+      if (owned.a >= 10 && !bought.has('x10')) out.push({ type: 'upgrade', def: up });
+      if (owned.a < 10 && !bought.has('x10')) {
+        const parts = [];
+        for (let i = owned.a; i < 10; i++) parts.push({ type: 'building', def: a });
+        parts.push({ type: 'upgrade', def: up });
+        out.push({ type: 'bundle', def: a, parts, label: 'a to 10 + x10' });
+      }
+      return out;
+    },
+    price(item) {
+      if (item.type === 'bundle') {
+        let total = 0;
+        for (const p of item.parts) { total += sim.price(p); sim.apply(p); }
+        for (let i = 0; i < item.parts.length; i++) sim.undo();
+        return total;
+      }
+      if (item.type === 'upgrade') return item.def.price;
+      return item.def.cost * Math.pow(1.15, owned[item.def.id] - (item.def.id === 'a' ? 8 : 0));
+    },
+    rate() {
+      const mult = bought.has('x10') ? 10 : 1;
+      return owned.a * a.bps * mult + owned.b * b.bps;
+    },
+    apply(item) {
+      if (item.type === 'bundle') {
+        const mark = stack.length;
+        for (const p of item.parts) sim.apply(p);
+        const undos = stack.splice(mark).reverse();
+        stack.push(() => { for (const u of undos) u(); });
+      } else if (item.type === 'building') {
+        owned[item.def.id]++;
+        stack.push(() => owned[item.def.id]--);
+      } else {
+        bought.add(item.def.id);
+        stack.push(() => bought.delete(item.def.id));
+      }
+    },
+    undo: () => stack.pop()(),
+    owned, bought,
+  };
+  return sim;
+}
+
+test('bundles let the planner work toward a threshold unlock', () => {
+  const sim = thresholdSim();
+  const r = plan(sim, { bank: 500, horizon: 900 });
+  assert.equal(r.path[0].item.def.id, 'a');
+  assert.deepEqual(sim.owned, { a: 8, b: 0 });
+  assert.equal(sim.bought.size, 0);
+});
+
 test('groupSteps collapses consecutive identical buys', () => {
   const a = { type: 'building', def: { id: 'a' } };
   const b = { type: 'building', def: { id: 'b' } };

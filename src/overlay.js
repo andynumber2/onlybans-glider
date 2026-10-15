@@ -79,7 +79,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
         <label>Depth <input data-set="depth" type="number" min="1" max="5" step="1"></label>
       </div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
-        ${OPS.map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
+        ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
       <details class="ops"><summary>Stats</summary>

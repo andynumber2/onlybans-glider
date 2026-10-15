@@ -4,11 +4,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p dist
 out=dist/onlybans-glider.user.js
+# The game build the automation rules were last checked against. Update this
+# file after re-analyzing a new bundle; the panel warns when the live build differs.
+analyzed=$(tr -d '[:space:]' < ANALYZED_BUILD)
 {
   cat src/header.txt
   echo
   echo '(() => {'
   echo "'use strict';"
+  echo "const ANALYZED_BUILD = '$analyzed';"
   for f in planner game ops stats overlay auto main; do
     echo
     echo "// ---- src/$f.js ----"

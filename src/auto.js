@@ -4,14 +4,22 @@
 
 const MAX_CLICKS_PER_CYCLE = 15;
 const CLICK_GAP_MS = [120, 260];
+// Utility upgrades (no production effect) are bought once they cost no more
+// than this many seconds of current income. Checked before the production
+// path so steady buying never starves them.
+export const UTILITY_MAX_SECONDS = 600;
 
 let busy = false;
 
 // Returns the number of purchases made. Never overlaps itself.
-export async function autoBuy(game, path) {
+export async function autoBuy(game, path, utilities = []) {
   if (busy) return 0;
   busy = true;
   try {
+    const arms = armsRacePick(game);
+    if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
+    const util = utilities.find(u => u.price <= game.G.s.bans && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
+    if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
     let clicks = 0;
     for (const step of path) {
       if (step.at > 0 || clicks >= MAX_CLICKS_PER_CYCLE || game.G.ascending) break;
@@ -29,6 +37,46 @@ export async function autoBuy(game, path) {
   } finally {
     busy = false;
   }
+}
+
+// Arms race (from the game's code): escalations are permanent ×1.10, ×1.15,
+// ×1.20 production. Each arms stage pushes perception up ~8.4 points
+// (income ×0.79-0.93 per stage), spawns evaders (popped by ops), and makes
+// golden reports red with chance stage/3. Red reports are worth more on
+// average (721 s vs 455 s of production), so the stage roughly pays for its
+// perception cost. Estimated net: +46-56% with all three escalations, vs
+// +44% for escalations + Détente (×0.95, ends the stage). So escalate, skip
+// Détente, and use a truce (30 min at stage 0) only to keep perception away
+// from the review bomb at 90 (production ×0.5 until it drops below 70).
+const ESCALATION_MAX_SECONDS = 900; // permanent +10-20%: pays back in hours
+const TRUCE_MAX_SECONDS_PER_STAGE = 180;
+const TRUCE_AT_PERCEPTION = 80;
+
+export function armsRacePick(game) {
+  const { G, upgrades, logic } = game;
+  const s = G.s;
+  const ar = s.armsRace;
+  if (!ar || ar.detente) return null;
+  const affordable = (def, maxSeconds) => {
+    const price = logic.upgradePrice(def);
+    return price <= s.bans && price <= maxSeconds * G.bps;
+  };
+  const available = id => {
+    const def = upgrades.find(u => u.id === id);
+    if (!def || s.upgradesBought.has(id) || !s.upgradesUnlocked.has(id)) return null;
+    return def;
+  };
+  for (let i = 0; i < 3; i++) {
+    const esc = available(`escalation:${i}`);
+    if (esc && affordable(esc, ESCALATION_MAX_SECONDS)) return esc;
+  }
+  const truce = upgrades.find(u => u.kind === 'truce');
+  const stage = armsStage(s);
+  const danger = s.perception >= TRUCE_AT_PERCEPTION;
+  if (stage > 0 && danger && truce && available(truce.id) && affordable(truce, TRUCE_MAX_SECONDS_PER_STAGE * stage)) {
+    return truce;
+  }
+  return null;
 }
 
 function clickBuilding(game, def) {
