@@ -26,7 +26,7 @@ function saveSettings(settings) {
 }
 
 const CSS = `
-#obh { position: fixed; z-index: 99999; width: min(340px, calc(100vw - 8px)); font: 12px/1.35 ui-monospace, Menlo, monospace;
+#obh { position: fixed; z-index: 99999; width: min(380px, calc(100vw - 8px)); font: 12px/1.35 ui-monospace, Menlo, monospace;
   color: #e6ebff; background: rgba(10,13,24,.94); border: 2px solid #f5c542; border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 #obh header { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: #f5c542;
@@ -35,7 +35,7 @@ const CSS = `
 #obh header button { all: unset; cursor: pointer; padding: 0 4px; font-weight: 700; }
 #obh header button[data-act="auto"] { border: 1px solid #111; border-radius: 3px; font-size: 10px; }
 #obh header button[data-act="auto"].on { background: #c62828; color: #fff; border-color: #c62828; }
-#obh .body { padding: 6px 8px; max-height: 70vh; overflow: auto; }
+#obh .body { padding: 6px 8px; max-height: 70vh; overflow: auto; overflow-wrap: anywhere; }
 #obh.collapsed .body { display: none; }
 #obh .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
 #obh select, #obh input { background: #1a2036; color: #e6ebff; border: 1px solid #39425f; font: inherit; }
@@ -45,11 +45,14 @@ const CSS = `
 #obh .muted { color: #8592b3; }
 #obh table { width: 100%; border-collapse: collapse; margin-top: 4px; }
 #obh th, #obh td { padding: 1px 3px; text-align: right; white-space: nowrap; }
-#obh th:first-child, #obh td:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+/* The name column takes whatever width the number columns leave and truncates,
+   so a table can never push the panel sideways. */
+#obh th:first-child, #obh td:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; width: 100%; max-width: 0; }
 #obh th { color: #8592b3; font-weight: 400; border-bottom: 1px solid #39425f; }
 #obh h4 { margin: 8px 0 2px; color: #f5c542; font-size: 12px; }
 #obh .err { color: #ff6b6b; white-space: pre-wrap; }
 #obh details.ops { margin-bottom: 6px; border: 1px solid #39425f; padding: 2px 6px; }
+#obh details.stats { margin: 10px 0 0; }
 #obh details.ops summary { cursor: pointer; color: #f5c542; }
 #obh details.ops label { display: block; }
 #obh details.ops input { width: auto; }
@@ -82,12 +85,13 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
-      <details class="ops"><summary>Stats</summary>
+      <div class="content muted">Binding to game…</div>
+      <details class="ops stats"><summary>Stats</summary>
+        <div class="statsLive muted"></div>
         <div class="statsBody muted">Collecting…</div>
         <div class="controls"><button data-act="copyStats">Copy JSON</button>
           <button data-act="resetStats">Reset</button></div>
       </details>
-      <div class="content muted">Binding to game…</div>
     </div>`;
   document.body.appendChild(root);
   place(root, settings);
@@ -156,6 +160,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
   const content = root.querySelector('.content');
   const opsLog = root.querySelector('.opsLog');
   const statsBody = root.querySelector('.statsBody');
+  const statsLive = root.querySelector('.statsLive');
   const logLines = [];
   return {
     settings,
@@ -166,6 +171,10 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
     renderStats(html) {
       statsBody.classList.remove('muted');
       statsBody.innerHTML = html;
+    },
+    // Planner-side numbers (rate, bank, planner time, build), refreshed each replan.
+    renderStatus(html) {
+      statsLive.innerHTML = html;
     },
     log(line) {
       const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });

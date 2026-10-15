@@ -5,7 +5,9 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "test": "node --test test/*.test.js",
-    "e2e": "npm run build && node scripts/e2e.mjs",
+    "check:layout": "node scripts/check-layout.mjs",
+    "release": "npm run build && npm test && npm run check:layout",
+    "e2e":"npm run build && node scripts/e2e.mjs",
     "sim": "npm run build && node scripts/sim/run.mjs",
     "experiments": "npm run build && node scripts/sim/experiments.mjs",
     "progress": "node scripts/sim/progress.mjs"

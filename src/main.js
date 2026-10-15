@@ -166,9 +166,10 @@ function render(game, ui, autoBought) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  html += `<div class="muted" style="margin-top:6px">rate ${fmtNum(result.rate)}/s (avg incl. golden reports + waves, no buffs) · bank ${fmtNum(bank)}
-    · ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
-  if (settings.auto) html += `<div class="muted">auto: ${autoBought} bought this session</div>`;
+  let status = `<div>Rate ${fmtNum(result.rate)}/s (avg incl. golden reports + waves, no buffs)</div>`;
+  status += `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
+  if (settings.auto) status += `<div>Auto: ${autoBought} bought this session</div>`;
+  ui.renderStatus(status);
   if (game.build !== ANALYZED_BUILD) {
     html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;
   }

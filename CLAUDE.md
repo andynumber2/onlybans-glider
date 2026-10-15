@@ -60,6 +60,8 @@ Commands: `npm run build`, `npm test`, `bash scripts/fetch.sh`, `npm run experim
 
 ## Testing
 
+- Before handing any build to the user, run `npm run release` (build, unit tests, layout check). `scripts/check-layout.mjs` runs the local game copy offline in headless Chromium, seeds large numbers, opens every section, and fails on any horizontal overflow in the panel. Horizontal scrollbars are never acceptable; vertical scrolling is fine. Fix overflow at the cause (column sizing, wrapping), never by hiding it with `overflow-x: hidden`.
+
 - Unit tests cover only the planner (`test/planner.test.js`).
 - Live headless runs against onlybans.wtf (`scripts/e2e*.mjs`) were blocked mid-session by the Claude Code auto-mode classifier. Do not work around it; ask the user to approve those commands. Most automation after v0.2 has only been verified by the user in their browser.
 - The user tests by re-importing `dist/onlybans-glider.user.js` in Tampermonkey (Chrome needs "Allow User Scripts"; check Tampermonkey itself is Enabled).
