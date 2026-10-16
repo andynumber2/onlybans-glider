@@ -71,6 +71,9 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 
 ## Workflow notes
 
+- Work directly on `main`: no feature branches, no worktrees, no PRs. Commit and push to `main` (each commit/push still needs the user's request).
+  WORKTREE EXCEPTION: operates directly on main.
+
 - Do not use Claude Code memory notes for this project. They are local to one machine and do not carry across machines. Put every durable fact, decision, and queue item in files inside this repository (this file, `FEATURES.md`, etc.).
 
 - `FEATURES.md` is the feature register (one row per game key, status, one-sentence strategy). After fetching a new build, run `python3 -I scripts/feature-scan.py`: it lists keys the register lacks (new features) or has but the bundle dropped. Keep the register in sync with every behavior change.
