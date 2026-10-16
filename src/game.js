@@ -183,15 +183,16 @@ export function goldenShare(s) {
   return ((1 - w) * ev.normal + w * ev.wrath) / gap;
 }
 
-// Average income from launching every ban wave at 100%: ×3 for 30 s is 60 s
-// of production per wave; the meter fills in 240/(1 + 0.04 × departments) s,
-// 30% faster with the Dashboard tool.
+// Average income from launching every ban wave at WAVE_LAUNCH_AT: the wave
+// runs ×round(3 + 1.5 × (meter − 1)) for 30 s; 100% of meter fills in
+// 240/(1 + 0.04 × departments) s, 30% faster with the Dashboard tool.
 export function waveShare(s) {
   let depts = 0;
   for (const b of Object.values(s.buildings)) if (b.amount > 0) depts++;
   let fill = 240 / (1 + 0.04 * depts);
   if (s.upgradesBought.has('tool:dashboard')) fill /= 1.3;
-  return 60 / fill;
+  const mult = Math.round(3 + 1.5 * (WAVE_LAUNCH_AT - 1));
+  return ((mult - 1) * 30) / (WAVE_LAUNCH_AT * fill);
 }
 
 export function armsStage(s) {

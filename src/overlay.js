@@ -5,7 +5,7 @@ const HORIZONS = [
   ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['12h', 43200], ['2d', 172800],
 ];
 const DEFAULTS = {
-  auto: false, horizon: 900, clicksPerSec: 0, depth: 3, beam: 5, collapsed: false,
+  auto: false, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
 };
 const LOG_LINES = 6;
@@ -31,7 +31,8 @@ const CSS = `
   box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 #obh header { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: #f5c542;
   color: #111; cursor: move; user-select: none; font-weight: 700; }
-#obh header span { flex: 1; }
+#obh header .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#obh header .rate { white-space: nowrap; }
 #obh header button { all: unset; cursor: pointer; padding: 0 4px; font-weight: 700; }
 #obh header button[data-act="auto"] { border: 1px solid #111; border-radius: 3px; font-size: 10px; }
 #obh header button[data-act="auto"].on { background: #c62828; color: #fff; border-color: #c62828; }
@@ -70,7 +71,8 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
   root.id = 'obh';
   if (settings.collapsed) root.classList.add('collapsed');
   root.innerHTML = `
-    <header><span>OnlyBans Glider</span>
+    <header><span class="title">OnlyBans Glider</span>
+      <span class="rate" title="Estimated income per second: production plus clicks, golden reports and ban waves on average; temporary buffs excluded"></span>
       <button data-act="auto" title="Auto-buy the plan's buy-now list">AUTO</button>
       <button data-act="refresh" title="Replan now">⟳</button>
       <button data-act="collapse" title="Collapse">–</button></header>
@@ -161,6 +163,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
   const opsLog = root.querySelector('.opsLog');
   const statsBody = root.querySelector('.statsBody');
   const statsLive = root.querySelector('.statsLive');
+  const rate = root.querySelector('header .rate');
   const logLines = [];
   return {
     settings,
@@ -172,7 +175,11 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
       statsBody.classList.remove('muted');
       statsBody.innerHTML = html;
     },
-    // Planner-side numbers (rate, bank, planner time, build), refreshed each replan.
+    // Estimated income per second, shown in the header so it stays visible collapsed.
+    renderRate(text) {
+      rate.textContent = text;
+    },
+    // Planner-side numbers (bank, planner time, build), refreshed each replan.
     renderStatus(html) {
       statsLive.innerHTML = html;
     },

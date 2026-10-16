@@ -8,6 +8,7 @@ import FakeTimers from '@sinonjs/fake-timers';
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { performance as realPerf } from 'node:perf_hooks';
 
 const SITE = resolve('research/site');
 
@@ -42,6 +43,9 @@ function installBrowserGlobals(w, clock) {
     w[k] = clock[k].bind(clock);
   }
   Object.defineProperty(w, 'performance', { value: globalThis.performance, configurable: true });
+  // Real wall clock for the userscript's planner timing, so its CPU budget
+  // throttles replans here as it does in the browser.
+  w.__realNow = () => realPerf.now();
   Object.defineProperty(w, 'Date', { value: globalThis.Date, configurable: true, writable: true });
 
   class PointerEvent extends w.MouseEvent {

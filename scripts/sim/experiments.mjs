@@ -1,7 +1,7 @@
 // Runs several simulations in parallel (one process each) and prints a table.
 //
-// Usage: node scripts/sim/experiments.mjs [minutes] [seeds]
-// Edit CONFIGS below to change what's compared.
+// Usage: node scripts/sim/experiments.mjs [minutes] [seeds] [set]
+// Edit CONFIG_SETS below to change what's compared; [set] picks one (default: first).
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { renderProgress } from './progress.mjs';
@@ -9,13 +9,26 @@ import { renderProgress } from './progress.mjs';
 const minutes = Number(process.argv[2] ?? 120);
 const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
-const CONFIGS = {
-  base: [],
-  noBundles: ['--set', 'bundles=false'],
-  coffee65: ['--set', 'ops.coffeeLoose=true'],
-  thermosCrunch: ['--relic', 'thermos'],
-  thermosNoCrunch: ['--relic', 'thermos', '--set', 'ops.thermosCrunch=false'],
+const CONFIG_SETS = {
+  // Ban wave launch point: the multiplier steps up at 134%, 200%, 267%.
+  waveAt: {
+    wave100: [],
+    wave134: ['--set', 'ops.waveAt=1.34'],
+    wave200: ['--set', 'ops.waveAt=2'],
+    wave267: ['--set', 'ops.waveAt=2.67'],
+  },
+  // Confirms the sweep's winner on fresh seeds, and whether longer still helps.
+  confirm: {
+    d3h15m: ['--set', 'depth=3', '--set', 'horizon=900'],
+    d1h1h: ['--set', 'depth=1', '--set', 'horizon=3600'],
+    d1h4h: ['--set', 'depth=1', '--set', 'horizon=14400'],
+  },
+  sweep: Object.fromEntries([1, 2, 3].flatMap(depth => [[300, '5m'], [900, '15m'], [3600, '1h']].map(([h, label]) =>
+    [`d${depth}h${label}`, ['--set', `depth=${depth}`, '--set', `horizon=${h}`]]))),
 };
+const setName = process.argv[4] ?? Object.keys(CONFIG_SETS)[0];
+const CONFIGS = CONFIG_SETS[setName];
+if (!CONFIGS) throw new Error(`unknown config set ${setName}; have ${Object.keys(CONFIG_SETS).join(', ')}`);
 
 // Live progress: written to research/sim-runs/progress.json for
 // scripts/sim/progress.mjs, and drawn in place when run in a terminal.
@@ -64,7 +77,8 @@ const rows = results.map(({ name, seed, result: r }) => {
   if (!r) return `${name.padEnd(16)} seed ${seed}: FAILED (see research/sim-runs/${name}-s${seed}.txt)`;
   return `${name.padEnd(16)} seed ${seed}: bansAllTime ${r.bansAllTime.toExponential(3)}  bps ${r.bps.toExponential(3)}` +
     `  waves ${r.waves} tiers ${r.tiers.join('/')}  avgHeat ${r.avgHeat?.toFixed(1)}  golden ${r.goldenClicked}/${r.goldenClicked + r.goldenMissed}` +
-    `  clicks ${r.clicks}  perception ${r.perception.toFixed(0)}  burnout ${r.burnout.toFixed(0)}  wall ${r.wallSeconds}s`;
+    `  clicks ${r.clicks}  perception ${r.perception.toFixed(0)}  burnout ${r.burnout.toFixed(0)}` +
+    `  planner ${r.plannerMs?.mean}/${r.plannerMs?.p95}/${r.plannerMs?.max}ms  wall ${r.wallSeconds}s`;
 });
 console.log(rows.join('\n'));
 

@@ -6,6 +6,13 @@ const BUY_NOW_ROWS = 6;
 const OPS_MS = 400;
 const STATS_MS = 1000;
 
+// Planner timing clock. The simulator fakes performance.now and supplies the
+// real wall clock as window.__realNow.
+function realNow() {
+  if (window.__realNow) return window.__realNow();
+  return performance.now();
+}
+
 async function waitForGame() {
   for (let i = 0; i < 300; i++) {
     if (window.OnlyBans && window.OnlyBans.G && window.OnlyBans.G.s) return;
@@ -42,14 +49,14 @@ async function start() {
     // A hidden tab only matters for display; auto mode keeps buying.
     if (document.hidden && !ui.settings.auto) return;
     let out;
-    const t0 = performance.now();
+    const t0 = realNow();
     try {
       out = render(game, ui, autoBought);
     } catch (e) {
       ui.render(`<div class="err">Planner error: ${esc(e.stack ?? e.message)}</div>`);
       return;
     }
-    const plannerMs = performance.now() - t0;
+    const plannerMs = realNow() - t0;
     if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities);
     return plannerMs;
   }
@@ -96,13 +103,13 @@ function statsHtml(sum) {
 function render(game, ui, autoBought) {
   const { settings } = ui;
   const bank = game.G.s.bans;
-  const t0 = performance.now();
+  const t0 = realNow();
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, HAMMER_CPS);
   const result = withSandbox(game, { clicksPerSec }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
-  const ms = performance.now() - t0;
+  const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
   const first = steps[0];
@@ -166,8 +173,8 @@ function render(game, ui, autoBought) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  let status = `<div>Rate ${fmtNum(result.rate)}/s (avg incl. golden reports + waves, no buffs)</div>`;
-  status += `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
+  ui.renderRate(`${fmtNum(result.rate)}/s`);
+  let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session</div>`;
   ui.renderStatus(status);
   if (game.build !== ANALYZED_BUILD) {

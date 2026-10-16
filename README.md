@@ -1,41 +1,47 @@
 # OnlyBans Glider
 
-Tampermonkey overlay for https://onlybans.wtf: plans the most efficient purchases and, with AUTO on, plays the game's mechanics through its own UI.
+Tampermonkey userscript for https://onlybans.wtf. It plans the most efficient purchases and, with AUTO on, buys them and plays the game's mechanics by clicking the game's own UI.
+
+Every action is a click on the game's DOM, so it goes through the game's input recorder and replays on the server like a human's input. The script never calls game logic to change state.
 
 ## Install
 
-1. Install Tampermonkey. In Chrome, also enable "Allow User Scripts" on the extension's details page.
-2. `npm run build`
+1. Install Tampermonkey. In Chrome, also enable "Allow User Scripts" on the extension's details page, and check Tampermonkey itself is Enabled.
+2. `npm run release` (build, unit tests, panel layout check).
 3. Tampermonkey dashboard → Utilities → import `dist/onlybans-glider.user.js` (or paste it into a new script).
-4. Reload onlybans.wtf. The panel appears top-left. Drag it by its header.
+4. Reload onlybans.wtf. The panel appears at the left edge. Drag it by its header; it stays anchored to the nearer edge.
 
 ## Using it
 
 - **Next**: the purchase to make now. A recommended building also gets a green outline in the store.
-- **Horizon**: how far ahead to plan. Purchases that can't be afforded and paid back within roughly two horizons are skipped. Short horizon = active play. Long horizon = save up while idle.
-- **Clicks/s**: how fast you click the hammer. This makes click upgrades count.
-- **Depth**: how many purchases ahead to search (3 is fast; 5 can take ~1s per replan).
-- **AUTO** (header button, red when on): buys the plan's buy-now list by clicking the store's own elements, so purchases go through the game's input recorder. Up to 15 clicks per 2s cycle, at most one upgrade per cycle.
-- Arms race upgrades (escalation, truce, detente) are listed but never planned.
-- Temporary buffs are ignored, so advice holds steady during golden events.
+- **AUTO** (header button, red when on): buys the plan's buy-now list (up to 15 clicks per cycle, one upgrade per cycle), picks arms race upgrades, buys utility upgrades, and runs everything enabled under Automation.
+- **Automation** section: one checkbox per game mechanic (hammer clicker, golden reports, ban waves and audits, the Lever, coffee, weekends, incidents, minigames, and more). Turn off a whole mechanic here; strategy within a mechanic is fixed by simulation and is not configurable.
+- **Horizon / Depth / Clicks/s**: planner settings. Defaults come from simulating the first 2 game-hours of a fresh run; adjust them for later phases. Clicks/s is overridden by the hammer clicker while it runs.
+- **Stats** section (bottom): wave verdicts, per-minute snapshots, and action counts, stored in IndexedDB. **Copy JSON** exports them.
+- The panel warns when the live game build differs from the one the automation was last checked against (`ANALYZED_BUILD`).
+- Not automated: Ship a Sequel (prestige), seed funding, and prestige upgrades.
 
 ## How it works
 
-The overlay re-imports the game's own ES module, so it reads the live building and upgrade tables plus the game's logic API (`calculateGains`, `buildingPrice`, `upgradePrice`). To value a purchase, it applies the purchase to the live state, runs the game's `calculateGains`, and reads the result. Then it restores the state, all in one synchronous block. It never clicks, buys, or sends anything. The leaderboard replays real inputs only, so the overlay cannot affect it.
+The script re-imports the game's own ES module, so it reads the live building and upgrade tables and the game's logic API (`calculateGains`, `buildingPrice`, `upgradePrice`). Exports are found by content, not by their minified names, so binding survives game updates.
 
-The planner (`src/planner.js`) tests short purchase sequences and picks the one that maximizes `bank(H) + rate(H) * H`.
+To value a purchase, the planner applies it to the live state, runs the game's `calculateGains`, reads the result, and restores the state, all in one synchronous block. Temporary buffs (Ban wave, Launch Day, etc.) are excluded, so advice holds steady during events. The planner (`src/planner.js`) tests short purchase sequences, including "buy N more of a department to unlock its upgrades" bundles, and picks the one that maximizes `bank(H) + rate(H) * H`.
 
 ## When the game updates
 
 ```
-bash scripts/fetch.sh        # did the bundle change?
-node scripts/probe.mjs       # can we still bind to logic API / tables?
-npm run e2e                  # full live check in headless Chromium
+bash scripts/fetch.sh                 # download the current bundle and index.html; did it change?
+python3 -I scripts/feature-scan.py    # new or removed game features vs FEATURES.md
+python3 -I scripts/bundle-diff.py OLD NEW   # what changed between two builds
 ```
 
-The ⟳ button rebinds without reloading. A game update still needs a page reload to load the new bundle.
+After re-checking the automation against a new build, update `ANALYZED_BUILD`. The ⟳ button replans without reloading; a game update needs a page reload.
 
 ## Dev
 
-- `npm test`: planner unit tests
-- `npm run e2e`: build, then run against the live site (throwaway browser, seeded with the game's own console cheats)
+- `npm test`: planner unit tests.
+- `npm run release`: build, tests, and the headless panel layout check. Run before every build you install, and bump `@version` in `src/header.txt`.
+- `npm run sim -- --minutes 60 --seed 1 [--set key=value]`: offline simulator. Runs the real game bundle in Node with a fake clock and the userscript loaded, then prints a JSON summary. The preferred way to test automation changes.
+- `npm run experiments -- MINUTES SEEDS SET`: run a named set of configs in parallel and compare scores. `npm run progress` shows live progress.
+- `FEATURES.md`: every game feature and what the automation does with it.
+- `CLAUDE.md`: project notes, mechanics reference, and the work queue.

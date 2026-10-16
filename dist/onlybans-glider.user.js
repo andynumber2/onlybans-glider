@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.16.1
+// @version      0.19.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,7 +11,7 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-BfICFFT7.js';
+const ANALYZED_BUILD = 'index-F1HYSyWE.js';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -376,15 +376,16 @@ function goldenShare(s) {
   return ((1 - w) * ev.normal + w * ev.wrath) / gap;
 }
 
-// Average income from launching every ban wave at 100%: ×3 for 30 s is 60 s
-// of production per wave; the meter fills in 240/(1 + 0.04 × departments) s,
-// 30% faster with the Dashboard tool.
+// Average income from launching every ban wave at WAVE_LAUNCH_AT: the wave
+// runs ×round(3 + 1.5 × (meter − 1)) for 30 s; 100% of meter fills in
+// 240/(1 + 0.04 × departments) s, 30% faster with the Dashboard tool.
 function waveShare(s) {
   let depts = 0;
   for (const b of Object.values(s.buildings)) if (b.amount > 0) depts++;
   let fill = 240 / (1 + 0.04 * depts);
   if (s.upgradesBought.has('tool:dashboard')) fill /= 1.3;
-  return 60 / fill;
+  const mult = Math.round(3 + 1.5 * (WAVE_LAUNCH_AT - 1));
+  return ((mult - 1) * 30) / (WAVE_LAUNCH_AT * fill);
 }
 
 function armsStage(s) {
@@ -490,12 +491,12 @@ const OPS = [
   { key: 'incidents', label: 'Other incidents (pay when it pays off)' },
   { key: 'coffee', label: 'Coffee run' },
   { key: 'callHammer', label: 'Call the Hammer' },
-  { key: 'lever', label: 'Pull the Lever at high burnout' },
+  { key: 'lever', label: 'Pull the Lever (when ready; near-full burnout with the Thermos)' },
   { key: 'coinLock', label: 'Coin-Lock during dupe/economy meta' },
   { key: 'audit', label: 'Audits' },
   { key: 'report', label: 'Transparency reports (clean only)' },
   { key: 'dupes', label: 'Dupe outbreaks' },
-  { key: 'banWaves', label: 'Ban waves (100%, audit first when possible)' },
+  { key: 'banWaves', label: 'Ban waves (hold to 267%, audit first when possible)' },
 ];
 
 const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, o.default ?? true]));
@@ -503,7 +504,11 @@ const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, o.default ?? true])
 // Tunables. Burnout is 0..100; humans lose burnout/200 of output.
 const COFFEE_MAX_BURNOUT = 40; // the game's own "suggest" threshold
 const WEEKEND_WORK_MAX_BURNOUT = 50; // crunch adds +20; stay under the 70 "hot" line
-const LEVER_AT_BURNOUT = 70; // the game's "hot" threshold
+// Without the Thermos, pull whenever ready: the 900 s cooldown limits pulls,
+// and each one trades 45 s of humans for 120 s of humans ×2 plus a burnout
+// reset (read from code; untested in the simulator, where every seed owns
+// the Thermos before the Lever unlocks).
+const LEVER_AT_BURNOUT = 0;
 const THERMOS_LEVER_AT = 95; // Thermos: tech ×(3 + burnout/10) during the party
 
 function hasRelic(game, id) {
@@ -596,7 +601,16 @@ const notchState = { pending: false, lastHeat: 0, lastTier: 0 };
 // An audit only scrubs innocents already in the pile, so run it just before
 // launch. (Run at ~25% charge, it left 4-27% innocents in waves, 3 of 9
 // TRENDING.) Launch waits for it when an audit is close.
-const AUDIT_AT_METER = 0.85;
+const AUDIT_AT_METER = 0.85; // fraction of the launch point
+
+// Wave meter level to launch at (1 = 100%). The multiplier is
+// round(3 + 1.5 × (meter − 1)), so ×6 from 267% (read from code). Simulated
+// 100/134/200/267%: 267% won on all 3 seeds, about 4.7× bans vs 100%
+// (2 game-hours, 2026-10-15). Hidden knob ops.waveAt for further tests.
+const WAVE_LAUNCH_AT = 2.67;
+function waveLaunchAt(enabled) {
+  return enabled.waveAt ?? WAVE_LAUNCH_AT;
+}
 
 const PIZZA_REACTION_MS = [120, 320];
 const PIZZA_CUTS_EACH = 4;
@@ -1005,7 +1019,7 @@ const ROUTINES = {
     return 'coin-lock';
   },
 
-  audit(G) {
+  audit(G, enabled) {
     const truth = G.s.truth;
     const panel = document.querySelector('.auRows');
     const open = panel && !panel.closest('.hidden') && truth.audit && truth.audit.cases;
@@ -1028,7 +1042,7 @@ const ROUTINES = {
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
-    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER;
+    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * waveLaunchAt(enabled);
     if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
     btn.click();
     return 'audit started';
@@ -1042,21 +1056,22 @@ const ROUTINES = {
     return 'transparency report';
   },
 
-  // Launch at 100%. The wave bonus grows roughly linearly with charge while
-  // holding raises the perception target and the odds of a bad verdict, so
-  // this beats Agentic AI's 200% auto-launch too. Audit first only when an
-  // audit is possible soon; early game (no Moderator) launches right away.
+  // Launch at WAVE_LAUNCH_AT (or 100% during a boost). Audit first only when
+  // an audit is possible soon; early game (no Moderator) launches right away.
   banWaves(G, enabled) {
     const truth = G.s.truth;
     const pile = truth.pile;
     const btn = usable('#waveBtn');
-    const charged = !!btn && G.s.waveMeter >= 1;
+    // During a ×2+ boost, launch at 100% regardless: the wave multiplies into it.
+    const boost = productionBoost(G);
+    let launchAt = waveLaunchAt(enabled);
+    if (boost >= 2) launchAt = 1;
+    const charged = !!btn && G.s.waveMeter >= launchAt;
     const auditOpen = !!(truth.audit && truth.audit.cases);
     const auditSoon = auditOpen || (enabled.audit && G.s.buildings.moderator.amount > 0 &&
       !(pile && pile.audited) && truth.auditCd / TICKS_PER_SEC <= AUDIT_WAIT_SECONDS);
     // The wave's ×3+ multiplies into an active boost, so don't wait for the
     // audit then (unless one is already open and nearly done).
-    const boost = productionBoost(G);
     const waitForAudit = auditOpen || (auditSoon && boost < 2);
     if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
     btn.click();
@@ -1377,7 +1392,7 @@ const HORIZONS = [
   ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['12h', 43200], ['2d', 172800],
 ];
 const DEFAULTS = {
-  auto: false, horizon: 900, clicksPerSec: 0, depth: 3, beam: 5, collapsed: false,
+  auto: false, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
 };
 const LOG_LINES = 6;
@@ -1403,7 +1418,8 @@ const CSS = `
   box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 #obh header { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: #f5c542;
   color: #111; cursor: move; user-select: none; font-weight: 700; }
-#obh header span { flex: 1; }
+#obh header .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#obh header .rate { white-space: nowrap; }
 #obh header button { all: unset; cursor: pointer; padding: 0 4px; font-weight: 700; }
 #obh header button[data-act="auto"] { border: 1px solid #111; border-radius: 3px; font-size: 10px; }
 #obh header button[data-act="auto"].on { background: #c62828; color: #fff; border-color: #c62828; }
@@ -1442,7 +1458,8 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
   root.id = 'obh';
   if (settings.collapsed) root.classList.add('collapsed');
   root.innerHTML = `
-    <header><span>OnlyBans Glider</span>
+    <header><span class="title">OnlyBans Glider</span>
+      <span class="rate" title="Estimated income per second: production plus clicks, golden reports and ban waves on average; temporary buffs excluded"></span>
       <button data-act="auto" title="Auto-buy the plan's buy-now list">AUTO</button>
       <button data-act="refresh" title="Replan now">⟳</button>
       <button data-act="collapse" title="Collapse">–</button></header>
@@ -1533,6 +1550,7 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
   const opsLog = root.querySelector('.opsLog');
   const statsBody = root.querySelector('.statsBody');
   const statsLive = root.querySelector('.statsLive');
+  const rate = root.querySelector('header .rate');
   const logLines = [];
   return {
     settings,
@@ -1544,7 +1562,11 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
       statsBody.classList.remove('muted');
       statsBody.innerHTML = html;
     },
-    // Planner-side numbers (rate, bank, planner time, build), refreshed each replan.
+    // Estimated income per second, shown in the header so it stays visible collapsed.
+    renderRate(text) {
+      rate.textContent = text;
+    },
+    // Planner-side numbers (bank, planner time, build), refreshed each replan.
     renderStatus(html) {
       statsLive.innerHTML = html;
     },
@@ -1757,6 +1779,13 @@ const BUY_NOW_ROWS = 6;
 const OPS_MS = 400;
 const STATS_MS = 1000;
 
+// Planner timing clock. The simulator fakes performance.now and supplies the
+// real wall clock as window.__realNow.
+function realNow() {
+  if (window.__realNow) return window.__realNow();
+  return performance.now();
+}
+
 async function waitForGame() {
   for (let i = 0; i < 300; i++) {
     if (window.OnlyBans && window.OnlyBans.G && window.OnlyBans.G.s) return;
@@ -1793,14 +1822,14 @@ async function start() {
     // A hidden tab only matters for display; auto mode keeps buying.
     if (document.hidden && !ui.settings.auto) return;
     let out;
-    const t0 = performance.now();
+    const t0 = realNow();
     try {
       out = render(game, ui, autoBought);
     } catch (e) {
       ui.render(`<div class="err">Planner error: ${esc(e.stack ?? e.message)}</div>`);
       return;
     }
-    const plannerMs = performance.now() - t0;
+    const plannerMs = realNow() - t0;
     if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities);
     return plannerMs;
   }
@@ -1847,13 +1876,13 @@ function statsHtml(sum) {
 function render(game, ui, autoBought) {
   const { settings } = ui;
   const bank = game.G.s.bans;
-  const t0 = performance.now();
+  const t0 = realNow();
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, HAMMER_CPS);
   const result = withSandbox(game, { clicksPerSec }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
-  const ms = performance.now() - t0;
+  const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
   const first = steps[0];
@@ -1917,8 +1946,8 @@ function render(game, ui, autoBought) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  let status = `<div>Rate ${fmtNum(result.rate)}/s (avg incl. golden reports + waves, no buffs)</div>`;
-  status += `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
+  ui.renderRate(`${fmtNum(result.rate)}/s`);
+  let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session</div>`;
   ui.renderStatus(status);
   if (game.build !== ANALYZED_BUILD) {

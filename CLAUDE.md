@@ -18,7 +18,7 @@ Context: a hackathon challenge where we play against the OnlyBans Trust & Safety
 - `scripts/fetch.sh`: downloads the current game bundle to `research/site/` (gitignored) and reports changes. `scripts/bundle-diff.py OLD NEW`: diff two builds despite re-minified names. `scripts/feature-scan.py`: compare the bundle's feature keys to `FEATURES.md`.
 - `scripts/sim/`: offline simulator (see below). `scripts/probe.mjs`, `scripts/e2e*.mjs`: live headless tests (blocked, see Testing).
 
-Commands: `npm run build`, `npm test`, `bash scripts/fetch.sh`, `npm run experiments -- 120 7,8,9`, `npm run progress`.
+Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout check; run before every user-installed build), `bash scripts/fetch.sh`, `npm run experiments -- 120 7,8,9`, `npm run progress`.
 
 ## How binding works (survives game updates)
 
@@ -52,7 +52,7 @@ Commands: `npm run build`, `npm test`, `bash scripts/fetch.sh`, `npm run experim
 - `scripts/sim/harness.mjs` runs the real game bundle from `research/site/` in Node under jsdom with a fake clock (`@sinonjs/fake-timers`), network stubbed, seeded `Math.random`. One process = one game. The userscript from `dist/` is eval'd into the same global scope, so it binds exactly as in the browser.
 - `node scripts/sim/run.mjs --minutes 60 --seed 1 [--set ops.notch=false] [--relic thermos]` prints progress and a JSON summary. ~1 game hour in ~5 min wall.
 - `node scripts/sim/experiments.mjs MINUTES SEEDS` runs the `CONFIGS` in parallel and prints a table; per-run logs in `research/sim-runs/` (gitignored). Live progress: `research/sim-runs/progress.json`, shown by `npm run progress` (the user can run `! npm run progress`).
-- Needs `research/site/index.html` and the bundle (`scripts/fetch.sh`, then curl index.html). jsdom has no layout, so every element reports a fixed 400x700 box.
+- Needs `research/site/index.html` and the bundle (both from `scripts/fetch.sh`). jsdom has no layout, so every element reports a fixed 400x700 box.
 - No network, so it is not subject to the live-site test block. Verify policy changes here before shipping.
 - Before trusting any batch, do a short sanity run and check the `actions` field of the summary: no `... error` entries, waves happening, no single routine with thousands of actions. Two bugs (an experiment flag with no routine starving the ops loop; the pizza "done" button clicked ~3000 times) were caught this way only after a batch had been wasted.
 - Compare configs on `score` (mean log10 total bans over the last 30 game-minutes) across several seeds; single endpoints swing 3× and seed variance is large. Results so far (2 h, seeds 7-9): bundles +28%, Thermos crunch +32%, notch controller +8% (one seed), coffee threshold 40 vs 65 no difference (coffee is cooldown-limited).
@@ -78,13 +78,19 @@ Commands: `npm run build`, `npm test`, `bash scripts/fetch.sh`, `npm run experim
 
 ## Next up (queue)
 
-1. Horizon × depth sweep in the simulator (e.g. depth 1/2/3 × horizon 5m/15m/1h, 2+ seeds; also watch planner ms), then hard-code the winners and remove Horizon, Depth, and Clicks/s from the panel (Clicks/s is already obsolete: the hammer sets the click rate). Depth >3 lags the real game (work grows ~5× per level).
-2. User should install the latest `dist/` build (v0.15.0) and send a Stats → Copy JSON after ~20 waves to confirm the audit-timing and notch fixes in real play.
-3. Commit: everything since `34a7261` is uncommitted (only commit when the user asks).
-4. Consider a simulator scenario starting from a late-game state (e.g. import the user's save) so late-game policies get tested; fresh-game sims only reach ~1e22 bans in 2 h.
+1. Horizon × depth sweep in the simulator (e.g. depth 1/2/3 × horizon 5m/15m/1h, 2+ seeds; also watch planner ms), then set the winners as the panel defaults. Decision (user, 2026-10-15): keep Horizon and Depth in the panel as tunables; they only cover a fresh run's first 2 h until late game is simulated (item 3, deferred). Depth >3 lags the real game (work grows ~5× per level).
+   Takes about 1.5 to 2 h wall and the laptop must stay awake; the user starts it ("start the sweep").
+   Sweep done (2026-10-15, `sweep` set, seeds 7-8, 2 h): longer horizon better at every depth; depth 1 ≥ depth 2-3. Scores d1: 21.43/21.71/21.95 (5m/15m/1h), d2: 21.48/21.62/21.70, d3: 21.47/21.58/21.55. Planner mean ms d1/d2/d3 ≈ 160/225/350 (18 sims on 18 cores, inflated). Seed variance up to 0.85. Confirmation batch (`confirm` set: d3h15m vs d1h1h vs d1h4h, seeds 10-13) done (seeds 10-13): d3h15m 21.94, d1h1h 22.32, d1h4h 21.65. d1h1h beat d3h15m on 4 of 6 seeds overall; set as the panel default (v0.18.0).
+2. Lever threshold experiment: in real play (v0.15.0 stats, 63 waves) burnout sat at 40 to 68 and the Lever fired only 3 times in 110 min (threshold 70), so humans lost 20 to 34% of output. Try lower thresholds in the simulator.
+   First batch (2026-10-15, `lever` set, leverAt 25/40/55/70, seeds 7-9, 2 h): all identical, because every seed owns the Thermos before the Lever unlocks, and the Thermos path ignores `leverAt`. Read from code: cooldown 900 s, party 45 s (humans 0, tech ×3 or ×(3+burnout/10) with Thermos), then burnout 0 and humans ×2 for 120 s. Without Thermos the bot now pulls whenever ready (inferred from code, cannot be simulated). Thermos threshold batch (95/80/60/40, seeds 7-9, 2 h): scores 22.15/21.66/21.97/21.92, no consistent winner per seed (best was 40, 60, 95 on seeds 7, 8, 9) and not monotonic, so noise. Kept 95; flag removed. Done.
+3. Ban wave launch point (`waveAt` set: 100/134/200/267%, seeds 7-9, 2 h). The multiplier is `round(3 + 1.5 × (meter − 1))`, so it steps at 134% (×4, 67 s of production per 100% of meter vs 60 s at 100%), 200% (×5, 60 s), 267% (×6, 56 s) (read from code; the earlier "roughly linear" rationale missed the rounding). Result: scores 21.88/21.93/22.40/22.55; 267% beat 100% on all 3 seeds (~4.7× bans) despite fewer waves (~38 vs ~70) and worse verdicts; why holding pays this much is not established. Shipped 267% (`WAVE_LAUNCH_AT`, v0.19.0), `waveShare` updated. Open: 300% (same ×6) and whether owning Agentic AI (auto-launches at 200%) hurts.
+4. Deferred (user, 2026-10-15): consider a simulator scenario starting from a late-game state (e.g. import the user's save) so late-game policies get tested; fresh-game sims only reach ~1e22 bans in 2 h.
 
 ## Open items
 
+- Real-play confirmation (v0.15.0, 2026-10-15): audit-before-launch works (from wave 26 on, 42 of 51 waves CLEAN vs 4 of 12 tier-2 before); notch projected heat runs about 0.75 to 0.85× high (cautious).
+- ➖ rows in `FEATURES.md` were audited on 2026-10-15: none has a player input that is not already automated (incl. The Hammer incident, Throwback week, golden outcomes; TDASH's drifting fraud case is clicked by the Legends routine).
+- Temporary buffs do not leak into planning (read from code, build RhCrl34K): Ban wave ×7, Launch Day ×2, department stops etc. are all `s.buffs` entries; the game's `rawBps` already excludes `multBps` buffs, and `withSandbox` empties `s.buffs` before recomputing.
 - Prestige (Ship a Sequel), seed funding, and prestige upgrades are left to the user.
 - Tally Counter relic: nothing to exploit (it removes the verdict roll after 10 right audit answers; waves can't be cancelled, and audits are already perfect).
-- The game's telemetry (`/api/ping`, since build BfICFFT7) reports a persistent `click2ban-id` plus totals (clicks, run seconds, golden clicked, waves). The hammer clicker is humanized (bursts, pauses, breaks; ~4 clicks/s average) for that reason.
+- The game's telemetry (`/api/ping`, since build BfICFFT7) reports a persistent `click2ban-id` plus totals (clicks, run seconds, golden clicked, waves). Since build RhCrl34K it also sends an `events` object (dupe outcomes, pizza party, review bomb, priority right/wrong/escaped, verdict tier counts, weird events seen; read from code). The hammer clicker is humanized (bursts, pauses, breaks; ~4 clicks/s average) for that reason.

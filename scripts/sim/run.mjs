@@ -47,6 +47,16 @@ let minute = 0;
 // log10(total bans) once a game-minute; growth is exponential, so compare runs
 // on the mean of the last 30 of these rather than one noisy endpoint.
 const logSamples = [];
+// Planner run time (real ms) read from the panel once a game-second.
+const plannerSamples = [];
+// The panel's "Rate" line, parsed back from fmtNum's units.
+const UNITS = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+function parseFmt(num, unit) {
+  return Number(num) * Math.pow(1000, Math.max(0, UNITS.indexOf(unit)));
+}
+const rateWindow = [];
+const rateChecks = [];
+let windowStartBans = 0;
 // Count automation actions by watching the panel's action log.
 const actionCounts = {};
 let lastLogTop = '';
@@ -57,6 +67,10 @@ await sim.run(opt.minutes * 60, s => {
     const kind = top.replace(/^\S+\s+(AM|PM)?\s*/, '').split(/[:(]/)[0].replace(/\d+/g, '').trim();
     actionCounts[kind] = (actionCounts[kind] ?? 0) + 1;
   }
+  const plannerMatch = sim.window.document.querySelector('#obh')?.textContent.match(/planner (\d+)ms/);
+  if (plannerMatch) plannerSamples.push(Number(plannerMatch[1]));
+  const rateMatch = sim.window.document.querySelector('#obh header .rate')?.textContent.match(/([\d.]+)([A-Za-z]*)\/s/);
+  if (rateMatch) rateWindow.push(parseFmt(rateMatch[1], rateMatch[2]));
   if ((s + 1) % 60 === 0) {
     logSamples.push(Math.log10(Math.max(1, G.s.bansAllTime)));
     // Machine-readable progress for experiments.mjs: game seconds done/total.
@@ -70,6 +84,13 @@ await sim.run(opt.minutes * 60, s => {
   }
   if ((s + 1) % 600 === 0) {
     minute += 10;
+    // Rate check: the panel's estimated rate (mean over the window) vs bans
+    // actually earned in the window.
+    const est = rateWindow.reduce((a, x) => a + x, 0) / Math.max(1, rateWindow.length);
+    const actual = (G.s.bansAllTime - windowStartBans) / 600;
+    rateChecks.push({ minute, est, actual, ratio: actual / est });
+    rateWindow.length = 0;
+    windowStartBans = G.s.bansAllTime;
     console.log(`t=${minute}m bansAllTime=${G.s.bansAllTime.toExponential(3)} bps=${G.bps.toExponential(3)} waves=${G.s.wavesLaunched} perception=${G.s.perception.toFixed(1)} notch=${G.s.truth.notch}`);
   }
 });
@@ -82,6 +103,13 @@ if (process.env.SIM_DEBUG) {
 const simMod = await import(sim.window.document.querySelector('script[type="module"]').src);
 const relicsOwned = Object.values(simMod).find(v => v && Array.isArray(v.owned) && 'ctr' in v && 'offer' in v)?.owned ?? [];
 
+function plannerStats(samples) {
+  if (!samples.length) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mean = samples.reduce((a, x) => a + x, 0) / samples.length;
+  return { mean: Math.round(mean), p95: sorted[Math.floor(sorted.length * 0.95)], max: sorted[sorted.length - 1] };
+}
+
 const tiers = [0, 0, 0, 0, 0];
 for (const w of waves) tiers[w.tier]++;
 const summary = {
@@ -92,6 +120,8 @@ const summary = {
   goldenClicked: G.s.eventsClicked, goldenMissed: G.s.eventsMissed, clicks: G.s.clicks,
   upgrades: G.s.upgradesBought.size, perception: G.s.perception, burnout: G.s.staff.burnout,
   relics: relicsOwned, actions: actionCounts,
+  plannerMs: plannerStats(plannerSamples),
+  rateChecks,
   wallSeconds: Math.round((realPerf.now() - wall0) / 1000),
 };
 console.log(JSON.stringify(summary));

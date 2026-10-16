@@ -23,12 +23,12 @@ export const OPS = [
   { key: 'incidents', label: 'Other incidents (pay when it pays off)' },
   { key: 'coffee', label: 'Coffee run' },
   { key: 'callHammer', label: 'Call the Hammer' },
-  { key: 'lever', label: 'Pull the Lever at high burnout' },
+  { key: 'lever', label: 'Pull the Lever (when ready; near-full burnout with the Thermos)' },
   { key: 'coinLock', label: 'Coin-Lock during dupe/economy meta' },
   { key: 'audit', label: 'Audits' },
   { key: 'report', label: 'Transparency reports (clean only)' },
   { key: 'dupes', label: 'Dupe outbreaks' },
-  { key: 'banWaves', label: 'Ban waves (100%, audit first when possible)' },
+  { key: 'banWaves', label: 'Ban waves (hold to 267%, audit first when possible)' },
 ];
 
 export const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, o.default ?? true]));
@@ -36,7 +36,11 @@ export const OPS_DEFAULTS = Object.fromEntries(OPS.map(o => [o.key, o.default ??
 // Tunables. Burnout is 0..100; humans lose burnout/200 of output.
 const COFFEE_MAX_BURNOUT = 40; // the game's own "suggest" threshold
 const WEEKEND_WORK_MAX_BURNOUT = 50; // crunch adds +20; stay under the 70 "hot" line
-const LEVER_AT_BURNOUT = 70; // the game's "hot" threshold
+// Without the Thermos, pull whenever ready: the 900 s cooldown limits pulls,
+// and each one trades 45 s of humans for 120 s of humans ×2 plus a burnout
+// reset (read from code; untested in the simulator, where every seed owns
+// the Thermos before the Lever unlocks).
+const LEVER_AT_BURNOUT = 0;
 const THERMOS_LEVER_AT = 95; // Thermos: tech ×(3 + burnout/10) during the party
 
 function hasRelic(game, id) {
@@ -129,7 +133,16 @@ const notchState = { pending: false, lastHeat: 0, lastTier: 0 };
 // An audit only scrubs innocents already in the pile, so run it just before
 // launch. (Run at ~25% charge, it left 4-27% innocents in waves, 3 of 9
 // TRENDING.) Launch waits for it when an audit is close.
-const AUDIT_AT_METER = 0.85;
+const AUDIT_AT_METER = 0.85; // fraction of the launch point
+
+// Wave meter level to launch at (1 = 100%). The multiplier is
+// round(3 + 1.5 × (meter − 1)), so ×6 from 267% (read from code). Simulated
+// 100/134/200/267%: 267% won on all 3 seeds, about 4.7× bans vs 100%
+// (2 game-hours, 2026-10-15). Hidden knob ops.waveAt for further tests.
+export const WAVE_LAUNCH_AT = 2.67;
+function waveLaunchAt(enabled) {
+  return enabled.waveAt ?? WAVE_LAUNCH_AT;
+}
 
 const PIZZA_REACTION_MS = [120, 320];
 const PIZZA_CUTS_EACH = 4;
@@ -538,7 +551,7 @@ const ROUTINES = {
     return 'coin-lock';
   },
 
-  audit(G) {
+  audit(G, enabled) {
     const truth = G.s.truth;
     const panel = document.querySelector('.auRows');
     const open = panel && !panel.closest('.hidden') && truth.audit && truth.audit.cases;
@@ -561,7 +574,7 @@ const ROUTINES = {
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
-    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER;
+    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * waveLaunchAt(enabled);
     if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
     btn.click();
     return 'audit started';
@@ -575,21 +588,22 @@ const ROUTINES = {
     return 'transparency report';
   },
 
-  // Launch at 100%. The wave bonus grows roughly linearly with charge while
-  // holding raises the perception target and the odds of a bad verdict, so
-  // this beats Agentic AI's 200% auto-launch too. Audit first only when an
-  // audit is possible soon; early game (no Moderator) launches right away.
+  // Launch at WAVE_LAUNCH_AT (or 100% during a boost). Audit first only when
+  // an audit is possible soon; early game (no Moderator) launches right away.
   banWaves(G, enabled) {
     const truth = G.s.truth;
     const pile = truth.pile;
     const btn = usable('#waveBtn');
-    const charged = !!btn && G.s.waveMeter >= 1;
+    // During a ×2+ boost, launch at 100% regardless: the wave multiplies into it.
+    const boost = productionBoost(G);
+    let launchAt = waveLaunchAt(enabled);
+    if (boost >= 2) launchAt = 1;
+    const charged = !!btn && G.s.waveMeter >= launchAt;
     const auditOpen = !!(truth.audit && truth.audit.cases);
     const auditSoon = auditOpen || (enabled.audit && G.s.buildings.moderator.amount > 0 &&
       !(pile && pile.audited) && truth.auditCd / TICKS_PER_SEC <= AUDIT_WAIT_SECONDS);
     // The wave's ×3+ multiplies into an active boost, so don't wait for the
     // audit then (unless one is already open and nearly done).
-    const boost = productionBoost(G);
     const waitForAudit = auditOpen || (auditSoon && boost < 2);
     if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
     btn.click();

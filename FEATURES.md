@@ -18,12 +18,12 @@ Last checked against: `index-BfICFFT7.js`
 | `action:e` | Hit evader | ✅ | Click its computed canvas position until popped. |
 | `action:i` | Incident choice | ✅ | Per-incident policy (see Incidents). |
 | `action:r` | Repair hit | ✅ | Press the lit button. |
-| `action:w` | Launch ban wave | ✅ | At 100% after a pre-launch audit; immediately during a ×2+ boost. |
+| `action:w` | Launch ban wave | ✅ | Hold to 267% (×6; simulated ~4.7× bans vs 100%), audit just before; at 100% during a ×2+ boost. |
 | `action:x` | (no-op) | ➖ | Returns false in the dispatcher. |
 | `action:y` | (no-op) | ➖ | Returns false in the dispatcher. |
 | `action:k` | Dupe response card | ✅ | Page, identify (answer from state), hotfix first, then the rest. |
 | `action:m` | Coin-Lock | ✅ | Only during duping/economy meta. |
-| `action:v` | Pull the Lever | ✅ | At burnout 70 (55 during a boost); never during Kernel Panic. |
+| `action:v` | Pull the Lever | ✅ | Whenever ready (cooldown-limited); with the Thermos at burnout 95 (80 during a boost); never during Kernel Panic. |
 | `action:a` | Ship a Sequel | ➖ | Prestige timing left to the user. |
 | `action:p` | Prestige upgrade | ➖ | Left to the user. |
 | `action:l` | Launch sequel | ➖ | Left to the user. |
@@ -45,7 +45,7 @@ Last checked against: `index-BfICFFT7.js`
 | `action:B` | BENZON bug report | ✅ | Click when he appears. |
 | `action:Y` | Crew legend | ✅ | Click when one appears. |
 | `action:U` | Squash crawling bug | ✅ | Click each bug during bug bounty chaos. |
-| `action:P` | Pizza party | ✅ | Serve if possible, else cut, else open soda; feed all 36. |
+| `action:P` | Pizza party | ✅ | Serve if possible, else cut, else open soda; feed all 36. Since build F1HYSyWE it can recur once per run (after a sequel). |
 | `action:f` | Transparency report | ✅ | Only when the verdict will be clean (reality/perception <0.35). |
 | `action:h` | Priority case verdict | ✅ | Answer from state; wait for airtight evidence if >2.5 s left. |
 | `action:t` | Ticket answer | ✅ | Answer from state. |
@@ -150,7 +150,7 @@ Last checked against: `index-BfICFFT7.js`
 | `tool:dashboard` | Dashboard | ✅ | Valued via wave share (waves fill 30% faster). |
 | `tool:anomaly` | Anomaly detection | ✅ | Utility rule; redundant with our golden clicking. |
 | `tool:copilot` | LLM copilot | ✅ | Utility rule; redundant with our incident handling. |
-| `tool:agent` | Agentic AI | ✅ | Utility rule; redundant (we launch at 100%). |
+| `tool:agent` | Agentic AI | ✅ | Utility rule. It auto-launches at 200%, before our 267%, when its conditions allow (read from code); its effect on the result is untested. |
 
 ## Golden report outcomes
 
