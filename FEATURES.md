@@ -150,7 +150,7 @@ Last checked against: `index-BfICFFT7.js`
 | `tool:dashboard` | Dashboard | ✅ | Valued via wave share (waves fill 30% faster). |
 | `tool:anomaly` | Anomaly detection | ✅ | Utility rule; redundant with our golden clicking. |
 | `tool:copilot` | LLM copilot | ✅ | Utility rule; redundant with our incident handling. |
-| `tool:agent` | Agentic AI | ✅ | Utility rule. It auto-launches at 200%, before our 267%, when its conditions allow (read from code); its effect on the result is untested. |
+| `tool:agent` | Agentic AI | ✅ | Utility rule. It auto-launches at 200%, before our 267%, when its conditions allow (read from code); it launched about half of waves in simulation with no measurable cost vs skipping it. |
 
 ## Golden report outcomes
 

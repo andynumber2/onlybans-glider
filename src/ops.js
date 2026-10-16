@@ -1,7 +1,7 @@
 // Automation for everything besides purchases. Every action is a click on the
 // game's own UI, so it runs the same recorded handler a human click does.
-// Each routine waits a random reaction delay after its target becomes
-// actionable, so nothing fires on the exact tick it becomes possible.
+// In human mode (src/input.js) each routine waits a random reaction delay
+// after its target becomes actionable, and only clicks what is not covered.
 
 export const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
@@ -177,11 +177,12 @@ const since = new Map();
 const delays = new Map();
 
 // True once `eligible` has held continuously for this key's reaction delay.
+// Outside human mode (Anti anti-cheat off) there is no delay.
 function ready(key, eligible, range = REACTION_MS) {
-  if (!eligible) {
+  if (!eligible || !humanMode()) {
     since.delete(key);
     delays.delete(key);
-    return false;
+    return eligible;
   }
   const now = performance.now();
   if (!since.has(key)) {
@@ -200,11 +201,6 @@ function usable(sel) {
   return el;
 }
 
-function press(el) {
-  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-  el.click();
-}
-
 // Incident cards carry no id; match the card by its title.
 function incidentCard(inc) {
   for (const card of document.querySelectorAll('.incident')) {
@@ -219,7 +215,7 @@ const ROUTINES = {
     for (const el of document.querySelectorAll('#shimmers .shimmer')) {
       if (ready('shimmer:' + shimmerKey(el), true)) {
         // Shimmers listen for pointerdown only.
-        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        if (!pointerDown(el)) return null;
         return 'clicked bonus';
       }
     }
@@ -236,7 +232,7 @@ const ROUTINES = {
       // check that nothing above the button is hidden.
       const done = document.querySelector('.pzResult .pzDone');
       if (!ready('pizza-done', !!done && !done.closest('.hidden'))) return null;
-      done.click();
+      if (!click(done)) return null;
       return 'pizza: back to banning';
     }
     if (!ready('pizza:' + p.fed + ':' + p.cuts + ':' + p.opened, true, PIZZA_REACTION_MS)) return null;
@@ -246,20 +242,20 @@ const ROUTINES = {
     if (seat >= 0) {
       const el = document.querySelector(`.pzTable .pzSeat[data-i="${seat}"]`);
       if (el) {
-        el.click();
+        if (!click(el)) return null;
         return `pizza: fed ${p.fed + 1}/36`;
       }
     }
     const pizza = p.pcuts.findIndex(c => c < PIZZA_CUTS_EACH);
     if (pizza >= 0 && p.slices <= 0) {
-      document.querySelectorAll('.pzPizza')[pizza]?.click();
+      if (!click(document.querySelectorAll('.pzPizza')[pizza])) return null;
       return 'pizza: cut';
     }
     if (p.opened < p.want.length) {
-      document.querySelector('.pzCooler')?.click();
+      if (!click(document.querySelector('.pzCooler'))) return null;
       return 'pizza: soda';
     }
-    if (pizza >= 0) document.querySelectorAll('.pzPizza')[pizza]?.click();
+    if (pizza >= 0) click(document.querySelectorAll('.pzPizza')[pizza]);
     return null;
   },
 
@@ -269,7 +265,7 @@ const ROUTINES = {
     const reg = G.s.truth.region;
     const flag = reg ? document.querySelector(`#regionRoom .rgFlag[data-r="${reg.ans}"]`) : null;
     if (!ready('region', !!flag, FAST_REACTION_MS)) return null;
-    flag.click();
+    if (!click(flag)) return null;
     return 'region: picked the right flag';
   },
 
@@ -277,14 +273,14 @@ const ROUTINES = {
     const el = usable('#zaburuff') ?? usable('#benzon') ??
       [...document.querySelectorAll('.crewLegend')].find(e => usable(e));
     if (!ready('legend:' + (el ? el.id || el.className : ''), !!el)) return null;
-    el.click();
+    if (!click(el)) return null;
     return 'legend: ' + (el.id || el.title.split(',')[0]);
   },
 
   bugs() {
     const bug = document.querySelector('#bugLayer .crawlBug');
     if (!ready('bug', !!bug, FAST_REACTION_MS)) return null;
-    bug.click();
+    if (!click(bug)) return null;
     return 'squashed a bug';
   },
 
@@ -302,11 +298,9 @@ const ROUTINES = {
     const cx = w * 0.46;
     const cy = Math.max(h * 0.46, 120 + 2.1 * z);
     const dist = z * (2.75 - 1.45 * ev.close);
-    canvas.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true,
-      clientX: rect.left + cx + Math.cos(ev.angle) * dist,
-      clientY: rect.top + cy + Math.sin(ev.angle) * dist,
-    }));
+    const x = rect.left + cx + Math.cos(ev.angle) * dist;
+    const y = rect.top + cy + Math.sin(ev.angle) * dist;
+    if (!pointerDownAt(x, y, [canvas, document.querySelector('#hammerHit')])) return null;
     return 'hit an evader';
   },
 
@@ -320,7 +314,7 @@ const ROUTINES = {
       : document.querySelectorAll('.wActions .incBtn');
     const btn = usable(btns[pick]);
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return `${wd.key}: ${btn.textContent.replace(/🔨.*/, '').trim()}`;
   },
 
@@ -331,14 +325,14 @@ const ROUTINES = {
       // Each alt is clickable for 2.4 s; 8 bans in 50 s wins.
       const alt = document.querySelector('.lcMsgs .lcAlt.active');
       if (!ready('speedrun:' + wd.x[0], !!alt, FAST_REACTION_MS)) return null;
-      alt.click();
+      if (!click(alt)) return null;
       return 'speedrun: banned an alt';
     }
     if (wd.key === 'devsReact') {
       // The good clip's index is wd.x[1]; each poll is open 10 s.
       const btn = wd.v > 0 ? usable(`.lcCtl button[data-arg="${wd.x[1]}"]`) : null;
       if (!ready('react:' + wd.x[0], !!btn)) return null;
-      btn.click();
+      if (!click(btn)) return null;
       return 'devs react: picked the good clip';
     }
     if (wd.key === 'cheatLaunch') {
@@ -347,7 +341,7 @@ const ROUTINES = {
       const left = (wd.x[1] - wd.x[0]) / TICKS_PER_SEC;
       const btn = wd.v === 0 && left <= LAUNCH_DROP_SECONDS ? usable('.lcCtl button[data-arg]') : null;
       if (!ready('launch', !!btn, [30, 120])) return null;
-      btn.click();
+      if (!click(btn)) return null;
       return `cheat launch: dropped with ${Math.floor(wd.n)} buyers`;
     }
     return null;
@@ -379,7 +373,7 @@ const ROUTINES = {
       return null;
     }
     if (!ready('notch', true)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     notchState.pending = false;
     return `notch ${dir < 0 ? 'stricter' : 'looser'} (last wave heat ${notchState.lastHeat.toFixed(1)})`;
   },
@@ -393,7 +387,7 @@ const ROUTINES = {
     const live = G.s.weird && G.s.weird.key === 'caughtLive';
     const btn = live ? usable('.liveChat .lcClip.ready') : null;
     if (!ready('clip', !!btn, FAST_REACTION_MS)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'clipped it';
   },
 
@@ -418,7 +412,7 @@ const ROUTINES = {
     // Nothing worth taking: leave it in the bag for 2 minutes of bans.
     const btn = best ?? offer.querySelector('.offerFoot button[data-i="3"]');
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     if (best) return 'relic: ' + order[bestRank];
     return 'relic: left in the bag (offered: ' + offered.join(', ') + ')';
   },
@@ -431,7 +425,7 @@ const ROUTINES = {
     if (!ready('priority:' + (cur ? cur.id : ''), eligible)) return null;
     const btn = usable(cur.guilty ? '#priorityBox .pBan' : '#priorityBox .pLegit');
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return cur.guilty ? 'priority: ban' : 'priority: legit';
   },
 
@@ -442,7 +436,7 @@ const ROUTINES = {
         const btns = incidentCard(inc)?.querySelectorAll('.ticketBtn');
         const btn = btns && usable(btns[inc.ticket.answer]);
         if (btn) {
-          btn.click();
+          if (!click(btn)) return null;
           return 'ticket answered';
         }
       }
@@ -450,7 +444,7 @@ const ROUTINES = {
         if (!ready('repair:' + inc.id + ':' + inc.repair.hits, true)) continue;
         const lit = incidentCard(inc)?.querySelector('.repairBtn.lit');
         if (lit) {
-          lit.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+          if (!pointerDown(lit)) return null;
           return 'repair hit';
         }
       }
@@ -465,7 +459,7 @@ const ROUTINES = {
     const work = thermosCrunch(game) || G.s.staff.burnout <= WEEKEND_WORK_MAX_BURNOUT;
     const btn = incidentCard(inc)?.querySelectorAll('.incBtn')[work ? 0 : 1];
     if (!usable(btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return work ? 'weekend: work' : 'weekend: off';
   },
 
@@ -478,7 +472,7 @@ const ROUTINES = {
       if (!ready('incident:' + inc.id, true)) continue;
       const btn = incidentCard(inc)?.querySelectorAll('.incBtn')[pick];
       if (!usable(btn)) continue;
-      btn.click();
+      if (!click(btn)) return null;
       return `${inc.key}: ${btn.textContent.replace(/🔨.*/, '').trim()}`;
     }
     return null;
@@ -495,14 +489,14 @@ const ROUTINES = {
     const ok = st.burnout < maxBurnout && !st.week.weekend && st.lever.party <= 0;
     const btn = usable('#coffeeBtn');
     if (!ready('coffee', ok && !!btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'coffee run';
   },
 
   callHammer() {
     const btn = usable('#hammerBtn');
     if (!ready('callHammer', !!btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'called the hammer';
   },
 
@@ -518,7 +512,7 @@ const ROUTINES = {
     if (productionBoost(G) >= 2) at -= 15;
     const ok = !!btn && !kernelPanic(G) && G.s.staff.burnout >= at;
     if (!ready('lever', ok)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return `pulled the lever (burnout ${Math.round(G.s.staff.burnout)})`;
   },
 
@@ -527,17 +521,17 @@ const ROUTINES = {
   popups() {
     const scroll = document.querySelector('.zsClose')?.parentElement;
     if (scroll && !scroll.classList.contains('hidden') && ready('popup:scroll', true)) {
-      scroll.click();
+      if (!click(scroll)) return null;
       return 'closed judgment scroll';
     }
     const bsod = document.querySelector('.bsodInner')?.parentElement;
     if (bsod && !bsod.classList.contains('hidden') && ready('popup:bsod', true)) {
-      bsod.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      if (!pointerDown(bsod)) return null;
       return 'closed blue screen';
     }
     const back = [...document.querySelectorAll('.wcBtn[data-a="go"]')].find(b => /BACK TO BANNING/i.test(b.textContent));
     if (back && !back.closest('.hidden') && ready('popup:welcome', true)) {
-      back.click();
+      if (!click(back)) return null;
       return 'closed welcome card';
     }
     return null;
@@ -547,7 +541,7 @@ const ROUTINES = {
     const meta = G.s.meta && G.s.meta.cur;
     const btn = usable('#coinBtn');
     if (!ready('coin', !!btn && (meta === 'duping' || meta === 'economy'))) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'coin-lock';
   },
 
@@ -563,20 +557,20 @@ const ROUTINES = {
         const clear = row.querySelector('button[data-v="1"]');
         if (c && !c.g && clear && !clear.classList.contains('on')) {
           if (!ready('audit-row:' + row.dataset.i, true)) return null;
-          clear.click();
+          if (!click(clear)) return null;
           return 'audit: cleared one';
         }
       }
       const submit = usable('.auSubmit');
       if (!ready('audit-submit', !!submit)) return null;
-      submit.click();
+      if (!click(submit)) return null;
       return 'audit submitted';
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
     const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * waveLaunchAt(enabled);
     if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'audit started';
   },
 
@@ -584,7 +578,7 @@ const ROUTINES = {
     const ratio = G.s.reality / Math.max(1, G.s.perception);
     const btn = usable('#repBtn');
     if (!ready('report', !!btn && ratio < CLEAN_REPORT_RATIO)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'transparency report';
   },
 
@@ -606,7 +600,7 @@ const ROUTINES = {
     // audit then (unless one is already open and nearly done).
     const waitForAudit = auditOpen || (auditSoon && boost < 2);
     if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return boost >= 2 ? `launched ban wave into a ×${boost.toFixed(1)} boost` : 'launched ban wave';
   },
 
@@ -622,13 +616,13 @@ const ROUTINES = {
     const logs = room.querySelectorAll('.drLogs .drLog');
     if (step === 'identify' && logs.length) {
       if (!ready('dupe-log', true, FAST_REACTION_MS)) return null;
-      logs[d.answer]?.click();
+      if (!click(logs[d.answer])) return null;
       return 'dupe: picked log line';
     }
     // The COIN-LOCK card counts as done while the ability is active.
     const card = [...room.querySelectorAll('.drCard')].find(c => c.querySelector('b')?.textContent === DUPE_LABELS[step]);
     if (!usable(card) || !ready('dupe:' + step, true, FAST_REACTION_MS)) return null;
-    card.click();
+    if (!click(card)) return null;
     return 'dupe: ' + step;
   },
 };
@@ -640,7 +634,9 @@ const ROUTINES = {
 // 4-9 clicks/s with irregular gaps, short pauses, and occasional breaks.
 // During boosts (click multipliers, or big production multipliers when clicks
 // scale with production) it clicks frantically, like a person would.
-export const HAMMER_CPS = 4; // long-run average, used to value click upgrades
+// Anti anti-cheat off: a steady 14/s, just under the game's >15/s flag.
+const HAMMER_CPS = 4; // human-mode long-run average
+const STEADY_CPS = 14;
 const HAMMER_MIN_SHARE = 0.01; // clicks must add at least 1% of passive income
 const MAX_CLICKS_PER_SEC = 13;
 const BURST_CPS = [4, 9];
@@ -651,6 +647,12 @@ const BREAK_CHANCE = 0.08; // per pause: a 1-4 minute break instead
 const BREAK_SECONDS = [60, 240];
 
 const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
+
+// Long-run clicks/s for the current mode; values click upgrades in the planner.
+export function hammerCps() {
+  if (humanMode()) return HAMMER_CPS;
+  return STEADY_CPS;
+}
 
 // Log-normal gap around the target rate: mostly near it, sometimes long.
 function gapMs(cps) {
@@ -669,7 +671,15 @@ export function startHammer(game, getSettings) {
     const now = performance.now();
     const boosted = !G.ascending && clickBoost(G) >= 2;
     let delay = 250;
-    if (settings.auto && settings.ops.hammer && hammerWorthwhile(G, boosted)) {
+    const active = settings.auto && settings.ops.hammer && hammerWorthwhile(G, boosted);
+    if (active && !humanMode()) {
+      while (recent.length && now - recent[0] > 1000) recent.shift();
+      if (recent.length < STEADY_CPS) {
+        clickHammer();
+        recent.push(now);
+      }
+      delay = 1000 / STEADY_CPS;
+    } else if (active) {
       if (boosted) {
         // Drop any pause: a person sees ×777 and starts mashing.
         clicking = true;
@@ -728,7 +738,7 @@ function hammerWorthwhile(G, boosted) {
   if (boosted) return true;
   const cur = G.s.priority && G.s.priority.cur;
   if (cur && !cur.verdict && cur.hits < cur.need) return true;
-  return G.clickPower * HAMMER_CPS >= HAMMER_MIN_SHARE * G.bps;
+  return G.clickPower * hammerCps() >= HAMMER_MIN_SHARE * G.bps;
 }
 
 // Total production multiplier from active good buffs (what a wave, coffee
@@ -746,7 +756,7 @@ function clickHammer() {
   if (!r.width || !r.height) return;
   const x = r.left + r.width * (0.35 + Math.random() * 0.3);
   const y = r.top + r.height * (0.35 + Math.random() * 0.3);
-  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  pointerDown(el, x, y);
 }
 
 // Worst-case heat of the wave currently charging, after the audit the

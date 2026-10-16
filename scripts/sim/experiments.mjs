@@ -11,6 +11,12 @@ const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
 const CONFIG_SETS = {
   // Ban wave launch point: the multiplier steps up at 134%, 200%, 267%.
+  // What human-like play costs: Anti anti-cheat on (default) vs off. The
+  // simulator skips the pop-up hit-test (no layout), so this measures pacing.
+  stealth: {
+    human: [],
+    steady: ['--set', 'stealth=false'],
+  },
   waveAt: {
     wave100: [],
     wave134: ['--set', 'ops.waveAt=1.34'],

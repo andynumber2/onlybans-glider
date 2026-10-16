@@ -46,6 +46,8 @@ function installBrowserGlobals(w, clock) {
   // Real wall clock for the userscript's planner timing, so its CPU budget
   // throttles replans here as it does in the browser.
   w.__realNow = () => realPerf.now();
+  // No layout in jsdom, so the userscript's click hit-test is skipped here.
+  w.__noLayout = true;
   Object.defineProperty(w, 'Date', { value: globalThis.Date, configurable: true, writable: true });
 
   class PointerEvent extends w.MouseEvent {

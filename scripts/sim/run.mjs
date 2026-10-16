@@ -23,6 +23,7 @@ for (const kv of opt.set) {
   if (raw === 'true') value = true;
   else if (raw === 'false') value = false;
   else if (!isNaN(Number(raw))) value = Number(raw);
+  else if (raw.startsWith('[')) value = JSON.parse(raw);
   const parts = path.split('.');
   let target = settings;
   while (parts.length > 1) target = target[parts.shift()] ??= {};
@@ -121,6 +122,7 @@ const summary = {
   upgrades: G.s.upgradesBought.size, perception: G.s.perception, burnout: G.s.staff.burnout,
   relics: relicsOwned, actions: actionCounts,
   plannerMs: plannerStats(plannerSamples),
+  agentOwned: G.s.upgradesBought.has("tool:agent"),
   rateChecks,
   wallSeconds: Math.round((realPerf.now() - wall0) / 1000),
 };

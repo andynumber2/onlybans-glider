@@ -13,7 +13,7 @@ analyzed=$(tr -d '[:space:]' < ANALYZED_BUILD)
   echo '(() => {'
   echo "'use strict';"
   echo "const ANALYZED_BUILD = '$analyzed';"
-  for f in planner game ops stats overlay auto main; do
+  for f in planner game input ops stats overlay auto main; do
     echo
     echo "// ---- src/$f.js ----"
     sed -E 's/^export //' "src/$f.js"

@@ -15,6 +15,7 @@ Every action is a click on the game's DOM, so it goes through the game's input r
 
 - **Next**: the purchase to make now. A recommended building also gets a green outline in the store.
 - **AUTO** (header button, red when on): buys the plan's buy-now list (up to 15 clicks per cycle, one upgrade per cycle), picks arms race upgrades, buys utility upgrades, and runs everything enabled under Automation.
+- **Anti anti-cheat** (top of Automation, on by default): only clicks what a person could see and reach (nothing under a game pop-up or off screen), with human reaction delays, a bursty hammer, and gaps between purchases. Turn it off for instant reactions and a steady 14 clicks/s hammer (just under the game's 15/s auto-clicker flag).
 - **Automation** section: one checkbox per game mechanic (hammer clicker, golden reports, ban waves and audits, the Lever, coffee, weekends, incidents, minigames, and more). Turn off a whole mechanic here; strategy within a mechanic is fixed by simulation and is not configurable.
 - **Horizon / Depth / Clicks/s**: planner settings. Defaults come from simulating the first 2 game-hours of a fresh run; adjust them for later phases. Clicks/s is overridden by the hammer clicker while it runs.
 - **Stats** section (bottom): wave verdicts, per-minute snapshots, and action counts, stored in IndexedDB. **Copy JSON** exports them.
@@ -40,7 +41,7 @@ After re-checking the automation against a new build, update `ANALYZED_BUILD`. T
 ## Dev
 
 - `npm test`: planner unit tests.
-- `npm run release`: build, tests, and the headless panel layout check. Run before every build you install, and bump `@version` in `src/header.txt`.
+- `npm run release`: build, tests, and the headless browser checks (panel layout, anti anti-cheat). Run before every build you install, and bump `@version` in `src/header.txt`.
 - `npm run sim -- --minutes 60 --seed 1 [--set key=value]`: offline simulator. Runs the real game bundle in Node with a fake clock and the userscript loaded, then prints a JSON summary. The preferred way to test automation changes.
 - `npm run experiments -- MINUTES SEEDS SET`: run a named set of configs in parallel and compare scores. `npm run progress` shows live progress.
 - `FEATURES.md`: every game feature and what the automation does with it.

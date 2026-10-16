@@ -5,35 +5,11 @@
 // opens every <details>, and fails if any part of the panel is wider than the
 // panel. Vertical scrolling is fine; horizontal scrolling is not.
 // Usage: npm run check:layout (also run by npm run build:check).
-import { chromium } from 'playwright';
-import { readFile, mkdir } from 'node:fs/promises';
-import path from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { openOfflineGame } from './offline-game.mjs';
 
-const SITE = 'research/site';
-const script = await readFile('dist/onlybans-glider.user.js', 'utf8');
-const bundlePath = (await readFile(path.join(SITE, 'LATEST'), 'utf8')).trim();
-const indexHtml = await readFile(path.join(SITE, 'index.html'), 'utf8');
 const BANKS = [2e4, 5e12, 3e24, 7e36];
-
-const browser = await chromium.launch();
-const context = await browser.newContext({ bypassCSP: true, viewport: { width: 1400, height: 900 } });
-await context.route('**/*', async route => {
-  const url = new URL(route.request().url());
-  if (url.hostname !== 'onlybans.wtf') return route.abort();
-  if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: indexHtml });
-  if (/^\/assets\/index-.*\.js$/.test(url.pathname)) {
-    return route.fulfill({ contentType: 'text/javascript', body: await readFile(bundlePath, 'utf8') });
-  }
-  return route.fulfill({ status: 404, body: '' });
-});
-const page = await context.newPage();
-const errors = [];
-page.on('pageerror', e => errors.push(e.message));
-
-await page.goto('https://onlybans.wtf/', { waitUntil: 'load' });
-await page.waitForFunction(() => window.OnlyBans && window.OnlyBans.G);
-await page.addScriptTag({ content: script });
-await page.waitForSelector('#obh .content:not(.muted)', { timeout: 20000 });
+const { browser, page, errors } = await openOfflineGame();
 
 const failures = [];
 await mkdir('research/e2e', { recursive: true });

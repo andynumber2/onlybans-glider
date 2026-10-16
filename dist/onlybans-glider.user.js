@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.19.0
+// @version      0.20.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -465,11 +465,99 @@ function specialUpgrades(game) {
     SPECIAL_KINDS.has(u.kind) && s.upgradesUnlocked.has(u.id) && !s.upgradesBought.has(u.id));
 }
 
+// ---- src/input.js ----
+// Every click the automation makes goes through here. With "Anti anti-cheat"
+// on (settings.stealth, the default) it only clicks what a person could: the
+// point clicked must show the target itself, not a pop-up or anything else
+// above it. The same setting turns on the human pacing elsewhere (reaction
+// delays in ops.js, hammer bursts, gaps between purchases in auto.js).
+//
+// None of this can make an event trusted: script-made events always carry
+// isTrusted === false. The game doesn't check it today (scripts/fetch.sh
+// warns if a new build starts to).
+
+let getInputSettings = () => ({ stealth: true });
+
+function bindInputSettings(getSettings) {
+  getInputSettings = getSettings;
+}
+
+function humanMode() {
+  return getInputSettings().stealth !== false;
+}
+
+// The simulator runs the game in jsdom, which has no layout; it sets
+// window.__noLayout so clicks skip the hit-test there.
+function canHitTest() {
+  return !window.__noLayout && typeof document.elementsFromPoint === 'function';
+}
+
+// The topmost element at a viewport point, ignoring this script's own panel
+// (the game can't see it, and a person would just move it).
+function topmostAt(x, y) {
+  for (const el of document.elementsFromPoint(x, y)) {
+    if (!el.closest('#obh')) return el;
+  }
+  return null;
+}
+
+// Where to click el: the given point, or its center. Null when a person
+// couldn't click it there (human mode only): no box, off screen, or covered.
+function clickPoint(el, x, y) {
+  if (!el || !el.isConnected) return null;
+  const r = el.getBoundingClientRect();
+  const px = x ?? r.left + r.width / 2;
+  const py = y ?? r.top + r.height / 2;
+  if (!humanMode() || !canHitTest()) return { x: px, y: py };
+  if (!r.width || !r.height) return null;
+  if (px < 0 || py < 0 || px >= window.innerWidth || py >= window.innerHeight) return null;
+  const top = topmostAt(px, py);
+  if (!top || !(top === el || el.contains(top))) return null;
+  return { x: px, y: py };
+}
+
+// Scrolls el into view first in human mode (a person scrolls to a store row
+// before clicking it).
+function reveal(el) {
+  if (el && humanMode() && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+
+// Returns false, without clicking, when the click is blocked.
+function click(el) {
+  if (!clickPoint(el)) return false;
+  el.click();
+  return true;
+}
+
+// Pointerdown at a viewport point on whichever of `targets` a person would
+// hit there (e.g. the evader canvas or the hammer's hit area above it; the
+// game hit-tests evaders from both). Outside human mode, targets[0].
+function pointerDownAt(x, y, targets) {
+  let el = targets[0];
+  if (humanMode() && canHitTest()) {
+    if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false;
+    const top = topmostAt(x, y);
+    el = top && targets.find(t => t && (t === top || t.contains(top)));
+    if (!el) return false;
+  }
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  return true;
+}
+
+// For elements that listen to pointerdown only (hammer, shimmers, repairs,
+// the evader canvas). x/y default to the element's center.
+function pointerDown(el, x, y) {
+  const p = clickPoint(el, x, y);
+  if (!p) return false;
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: p.x, clientY: p.y }));
+  return true;
+}
+
 // ---- src/ops.js ----
 // Automation for everything besides purchases. Every action is a click on the
 // game's own UI, so it runs the same recorded handler a human click does.
-// Each routine waits a random reaction delay after its target becomes
-// actionable, so nothing fires on the exact tick it becomes possible.
+// In human mode (src/input.js) each routine waits a random reaction delay
+// after its target becomes actionable, and only clicks what is not covered.
 
 const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
@@ -645,11 +733,12 @@ const since = new Map();
 const delays = new Map();
 
 // True once `eligible` has held continuously for this key's reaction delay.
+// Outside human mode (Anti anti-cheat off) there is no delay.
 function ready(key, eligible, range = REACTION_MS) {
-  if (!eligible) {
+  if (!eligible || !humanMode()) {
     since.delete(key);
     delays.delete(key);
-    return false;
+    return eligible;
   }
   const now = performance.now();
   if (!since.has(key)) {
@@ -668,11 +757,6 @@ function usable(sel) {
   return el;
 }
 
-function press(el) {
-  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
-  el.click();
-}
-
 // Incident cards carry no id; match the card by its title.
 function incidentCard(inc) {
   for (const card of document.querySelectorAll('.incident')) {
@@ -687,7 +771,7 @@ const ROUTINES = {
     for (const el of document.querySelectorAll('#shimmers .shimmer')) {
       if (ready('shimmer:' + shimmerKey(el), true)) {
         // Shimmers listen for pointerdown only.
-        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        if (!pointerDown(el)) return null;
         return 'clicked bonus';
       }
     }
@@ -704,7 +788,7 @@ const ROUTINES = {
       // check that nothing above the button is hidden.
       const done = document.querySelector('.pzResult .pzDone');
       if (!ready('pizza-done', !!done && !done.closest('.hidden'))) return null;
-      done.click();
+      if (!click(done)) return null;
       return 'pizza: back to banning';
     }
     if (!ready('pizza:' + p.fed + ':' + p.cuts + ':' + p.opened, true, PIZZA_REACTION_MS)) return null;
@@ -714,20 +798,20 @@ const ROUTINES = {
     if (seat >= 0) {
       const el = document.querySelector(`.pzTable .pzSeat[data-i="${seat}"]`);
       if (el) {
-        el.click();
+        if (!click(el)) return null;
         return `pizza: fed ${p.fed + 1}/36`;
       }
     }
     const pizza = p.pcuts.findIndex(c => c < PIZZA_CUTS_EACH);
     if (pizza >= 0 && p.slices <= 0) {
-      document.querySelectorAll('.pzPizza')[pizza]?.click();
+      if (!click(document.querySelectorAll('.pzPizza')[pizza])) return null;
       return 'pizza: cut';
     }
     if (p.opened < p.want.length) {
-      document.querySelector('.pzCooler')?.click();
+      if (!click(document.querySelector('.pzCooler'))) return null;
       return 'pizza: soda';
     }
-    if (pizza >= 0) document.querySelectorAll('.pzPizza')[pizza]?.click();
+    if (pizza >= 0) click(document.querySelectorAll('.pzPizza')[pizza]);
     return null;
   },
 
@@ -737,7 +821,7 @@ const ROUTINES = {
     const reg = G.s.truth.region;
     const flag = reg ? document.querySelector(`#regionRoom .rgFlag[data-r="${reg.ans}"]`) : null;
     if (!ready('region', !!flag, FAST_REACTION_MS)) return null;
-    flag.click();
+    if (!click(flag)) return null;
     return 'region: picked the right flag';
   },
 
@@ -745,14 +829,14 @@ const ROUTINES = {
     const el = usable('#zaburuff') ?? usable('#benzon') ??
       [...document.querySelectorAll('.crewLegend')].find(e => usable(e));
     if (!ready('legend:' + (el ? el.id || el.className : ''), !!el)) return null;
-    el.click();
+    if (!click(el)) return null;
     return 'legend: ' + (el.id || el.title.split(',')[0]);
   },
 
   bugs() {
     const bug = document.querySelector('#bugLayer .crawlBug');
     if (!ready('bug', !!bug, FAST_REACTION_MS)) return null;
-    bug.click();
+    if (!click(bug)) return null;
     return 'squashed a bug';
   },
 
@@ -770,11 +854,9 @@ const ROUTINES = {
     const cx = w * 0.46;
     const cy = Math.max(h * 0.46, 120 + 2.1 * z);
     const dist = z * (2.75 - 1.45 * ev.close);
-    canvas.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true, cancelable: true,
-      clientX: rect.left + cx + Math.cos(ev.angle) * dist,
-      clientY: rect.top + cy + Math.sin(ev.angle) * dist,
-    }));
+    const x = rect.left + cx + Math.cos(ev.angle) * dist;
+    const y = rect.top + cy + Math.sin(ev.angle) * dist;
+    if (!pointerDownAt(x, y, [canvas, document.querySelector('#hammerHit')])) return null;
     return 'hit an evader';
   },
 
@@ -788,7 +870,7 @@ const ROUTINES = {
       : document.querySelectorAll('.wActions .incBtn');
     const btn = usable(btns[pick]);
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return `${wd.key}: ${btn.textContent.replace(/🔨.*/, '').trim()}`;
   },
 
@@ -799,14 +881,14 @@ const ROUTINES = {
       // Each alt is clickable for 2.4 s; 8 bans in 50 s wins.
       const alt = document.querySelector('.lcMsgs .lcAlt.active');
       if (!ready('speedrun:' + wd.x[0], !!alt, FAST_REACTION_MS)) return null;
-      alt.click();
+      if (!click(alt)) return null;
       return 'speedrun: banned an alt';
     }
     if (wd.key === 'devsReact') {
       // The good clip's index is wd.x[1]; each poll is open 10 s.
       const btn = wd.v > 0 ? usable(`.lcCtl button[data-arg="${wd.x[1]}"]`) : null;
       if (!ready('react:' + wd.x[0], !!btn)) return null;
-      btn.click();
+      if (!click(btn)) return null;
       return 'devs react: picked the good clip';
     }
     if (wd.key === 'cheatLaunch') {
@@ -815,7 +897,7 @@ const ROUTINES = {
       const left = (wd.x[1] - wd.x[0]) / TICKS_PER_SEC;
       const btn = wd.v === 0 && left <= LAUNCH_DROP_SECONDS ? usable('.lcCtl button[data-arg]') : null;
       if (!ready('launch', !!btn, [30, 120])) return null;
-      btn.click();
+      if (!click(btn)) return null;
       return `cheat launch: dropped with ${Math.floor(wd.n)} buyers`;
     }
     return null;
@@ -847,7 +929,7 @@ const ROUTINES = {
       return null;
     }
     if (!ready('notch', true)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     notchState.pending = false;
     return `notch ${dir < 0 ? 'stricter' : 'looser'} (last wave heat ${notchState.lastHeat.toFixed(1)})`;
   },
@@ -861,7 +943,7 @@ const ROUTINES = {
     const live = G.s.weird && G.s.weird.key === 'caughtLive';
     const btn = live ? usable('.liveChat .lcClip.ready') : null;
     if (!ready('clip', !!btn, FAST_REACTION_MS)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'clipped it';
   },
 
@@ -886,7 +968,7 @@ const ROUTINES = {
     // Nothing worth taking: leave it in the bag for 2 minutes of bans.
     const btn = best ?? offer.querySelector('.offerFoot button[data-i="3"]');
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     if (best) return 'relic: ' + order[bestRank];
     return 'relic: left in the bag (offered: ' + offered.join(', ') + ')';
   },
@@ -899,7 +981,7 @@ const ROUTINES = {
     if (!ready('priority:' + (cur ? cur.id : ''), eligible)) return null;
     const btn = usable(cur.guilty ? '#priorityBox .pBan' : '#priorityBox .pLegit');
     if (!btn) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return cur.guilty ? 'priority: ban' : 'priority: legit';
   },
 
@@ -910,7 +992,7 @@ const ROUTINES = {
         const btns = incidentCard(inc)?.querySelectorAll('.ticketBtn');
         const btn = btns && usable(btns[inc.ticket.answer]);
         if (btn) {
-          btn.click();
+          if (!click(btn)) return null;
           return 'ticket answered';
         }
       }
@@ -918,7 +1000,7 @@ const ROUTINES = {
         if (!ready('repair:' + inc.id + ':' + inc.repair.hits, true)) continue;
         const lit = incidentCard(inc)?.querySelector('.repairBtn.lit');
         if (lit) {
-          lit.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+          if (!pointerDown(lit)) return null;
           return 'repair hit';
         }
       }
@@ -933,7 +1015,7 @@ const ROUTINES = {
     const work = thermosCrunch(game) || G.s.staff.burnout <= WEEKEND_WORK_MAX_BURNOUT;
     const btn = incidentCard(inc)?.querySelectorAll('.incBtn')[work ? 0 : 1];
     if (!usable(btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return work ? 'weekend: work' : 'weekend: off';
   },
 
@@ -946,7 +1028,7 @@ const ROUTINES = {
       if (!ready('incident:' + inc.id, true)) continue;
       const btn = incidentCard(inc)?.querySelectorAll('.incBtn')[pick];
       if (!usable(btn)) continue;
-      btn.click();
+      if (!click(btn)) return null;
       return `${inc.key}: ${btn.textContent.replace(/🔨.*/, '').trim()}`;
     }
     return null;
@@ -963,14 +1045,14 @@ const ROUTINES = {
     const ok = st.burnout < maxBurnout && !st.week.weekend && st.lever.party <= 0;
     const btn = usable('#coffeeBtn');
     if (!ready('coffee', ok && !!btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'coffee run';
   },
 
   callHammer() {
     const btn = usable('#hammerBtn');
     if (!ready('callHammer', !!btn)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'called the hammer';
   },
 
@@ -986,7 +1068,7 @@ const ROUTINES = {
     if (productionBoost(G) >= 2) at -= 15;
     const ok = !!btn && !kernelPanic(G) && G.s.staff.burnout >= at;
     if (!ready('lever', ok)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return `pulled the lever (burnout ${Math.round(G.s.staff.burnout)})`;
   },
 
@@ -995,17 +1077,17 @@ const ROUTINES = {
   popups() {
     const scroll = document.querySelector('.zsClose')?.parentElement;
     if (scroll && !scroll.classList.contains('hidden') && ready('popup:scroll', true)) {
-      scroll.click();
+      if (!click(scroll)) return null;
       return 'closed judgment scroll';
     }
     const bsod = document.querySelector('.bsodInner')?.parentElement;
     if (bsod && !bsod.classList.contains('hidden') && ready('popup:bsod', true)) {
-      bsod.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      if (!pointerDown(bsod)) return null;
       return 'closed blue screen';
     }
     const back = [...document.querySelectorAll('.wcBtn[data-a="go"]')].find(b => /BACK TO BANNING/i.test(b.textContent));
     if (back && !back.closest('.hidden') && ready('popup:welcome', true)) {
-      back.click();
+      if (!click(back)) return null;
       return 'closed welcome card';
     }
     return null;
@@ -1015,7 +1097,7 @@ const ROUTINES = {
     const meta = G.s.meta && G.s.meta.cur;
     const btn = usable('#coinBtn');
     if (!ready('coin', !!btn && (meta === 'duping' || meta === 'economy'))) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'coin-lock';
   },
 
@@ -1031,20 +1113,20 @@ const ROUTINES = {
         const clear = row.querySelector('button[data-v="1"]');
         if (c && !c.g && clear && !clear.classList.contains('on')) {
           if (!ready('audit-row:' + row.dataset.i, true)) return null;
-          clear.click();
+          if (!click(clear)) return null;
           return 'audit: cleared one';
         }
       }
       const submit = usable('.auSubmit');
       if (!ready('audit-submit', !!submit)) return null;
-      submit.click();
+      if (!click(submit)) return null;
       return 'audit submitted';
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
     const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * waveLaunchAt(enabled);
     if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'audit started';
   },
 
@@ -1052,7 +1134,7 @@ const ROUTINES = {
     const ratio = G.s.reality / Math.max(1, G.s.perception);
     const btn = usable('#repBtn');
     if (!ready('report', !!btn && ratio < CLEAN_REPORT_RATIO)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return 'transparency report';
   },
 
@@ -1074,7 +1156,7 @@ const ROUTINES = {
     // audit then (unless one is already open and nearly done).
     const waitForAudit = auditOpen || (auditSoon && boost < 2);
     if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
-    btn.click();
+    if (!click(btn)) return null;
     return boost >= 2 ? `launched ban wave into a ×${boost.toFixed(1)} boost` : 'launched ban wave';
   },
 
@@ -1090,13 +1172,13 @@ const ROUTINES = {
     const logs = room.querySelectorAll('.drLogs .drLog');
     if (step === 'identify' && logs.length) {
       if (!ready('dupe-log', true, FAST_REACTION_MS)) return null;
-      logs[d.answer]?.click();
+      if (!click(logs[d.answer])) return null;
       return 'dupe: picked log line';
     }
     // The COIN-LOCK card counts as done while the ability is active.
     const card = [...room.querySelectorAll('.drCard')].find(c => c.querySelector('b')?.textContent === DUPE_LABELS[step]);
     if (!usable(card) || !ready('dupe:' + step, true, FAST_REACTION_MS)) return null;
-    card.click();
+    if (!click(card)) return null;
     return 'dupe: ' + step;
   },
 };
@@ -1108,7 +1190,9 @@ const ROUTINES = {
 // 4-9 clicks/s with irregular gaps, short pauses, and occasional breaks.
 // During boosts (click multipliers, or big production multipliers when clicks
 // scale with production) it clicks frantically, like a person would.
-const HAMMER_CPS = 4; // long-run average, used to value click upgrades
+// Anti anti-cheat off: a steady 14/s, just under the game's >15/s flag.
+const HAMMER_CPS = 4; // human-mode long-run average
+const STEADY_CPS = 14;
 const HAMMER_MIN_SHARE = 0.01; // clicks must add at least 1% of passive income
 const MAX_CLICKS_PER_SEC = 13;
 const BURST_CPS = [4, 9];
@@ -1119,6 +1203,12 @@ const BREAK_CHANCE = 0.08; // per pause: a 1-4 minute break instead
 const BREAK_SECONDS = [60, 240];
 
 const rand = ([lo, hi]) => lo + Math.random() * (hi - lo);
+
+// Long-run clicks/s for the current mode; values click upgrades in the planner.
+function hammerCps() {
+  if (humanMode()) return HAMMER_CPS;
+  return STEADY_CPS;
+}
 
 // Log-normal gap around the target rate: mostly near it, sometimes long.
 function gapMs(cps) {
@@ -1137,7 +1227,15 @@ function startHammer(game, getSettings) {
     const now = performance.now();
     const boosted = !G.ascending && clickBoost(G) >= 2;
     let delay = 250;
-    if (settings.auto && settings.ops.hammer && hammerWorthwhile(G, boosted)) {
+    const active = settings.auto && settings.ops.hammer && hammerWorthwhile(G, boosted);
+    if (active && !humanMode()) {
+      while (recent.length && now - recent[0] > 1000) recent.shift();
+      if (recent.length < STEADY_CPS) {
+        clickHammer();
+        recent.push(now);
+      }
+      delay = 1000 / STEADY_CPS;
+    } else if (active) {
       if (boosted) {
         // Drop any pause: a person sees ×777 and starts mashing.
         clicking = true;
@@ -1196,7 +1294,7 @@ function hammerWorthwhile(G, boosted) {
   if (boosted) return true;
   const cur = G.s.priority && G.s.priority.cur;
   if (cur && !cur.verdict && cur.hits < cur.need) return true;
-  return G.clickPower * HAMMER_CPS >= HAMMER_MIN_SHARE * G.bps;
+  return G.clickPower * hammerCps() >= HAMMER_MIN_SHARE * G.bps;
 }
 
 // Total production multiplier from active good buffs (what a wave, coffee
@@ -1214,7 +1312,7 @@ function clickHammer() {
   if (!r.width || !r.height) return;
   const x = r.left + r.width * (0.35 + Math.random() * 0.3);
   const y = r.top + r.height * (0.35 + Math.random() * 0.3);
-  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+  pointerDown(el, x, y);
 }
 
 // Worst-case heat of the wave currently charging, after the audit the
@@ -1392,7 +1490,7 @@ const HORIZONS = [
   ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['12h', 43200], ['2d', 172800],
 ];
 const DEFAULTS = {
-  auto: false, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
+  auto: false, stealth: true, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
 };
 const LOG_LINES = 6;
@@ -1443,6 +1541,7 @@ const CSS = `
 #obh details.stats { margin: 10px 0 0; }
 #obh details.ops summary { cursor: pointer; color: #f5c542; }
 #obh details.ops label { display: block; }
+#obh details.ops label.stealth { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #2a3150; }
 #obh details.ops input { width: auto; }
 #obh .opsLog { color: #8592b3; margin-top: 4px; white-space: pre-wrap; }
 #buildings .product.obh-pick { outline: 3px solid #6fdc6f; outline-offset: -3px; }
@@ -1471,6 +1570,7 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
         <label>Depth <input data-set="depth" type="number" min="1" max="5" step="1"></label>
       </div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
+        <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
@@ -1491,6 +1591,15 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
     el.addEventListener('change', () => {
       settings.ops[el.dataset.op] = el.checked;
       saveSettings(settings);
+    });
+  }
+
+  for (const el of root.querySelectorAll('[data-flag]')) {
+    el.checked = !!settings[el.dataset.flag];
+    el.addEventListener('change', () => {
+      settings[el.dataset.flag] = el.checked;
+      saveSettings(settings);
+      onChange(settings);
     });
   }
 
@@ -1656,7 +1765,7 @@ function esc(s) {
 // purchase goes through the game's input recorder like any other input.
 
 const MAX_CLICKS_PER_CYCLE = 15;
-const CLICK_GAP_MS = [120, 260];
+const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
 // path so steady buying never starves them.
@@ -1684,7 +1793,7 @@ async function autoBuy(game, path, utilities = []) {
       clicks++;
       // The upgrade crates re-render after a purchase; wait for the next cycle.
       if (step.item.type === 'upgrade') break;
-      await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
+      if (humanMode()) await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
     }
     return clicks;
   } finally {
@@ -1736,8 +1845,8 @@ function clickBuilding(game, def) {
   if (!ensureBuyOne()) return false;
   const row = document.querySelectorAll('#buildings .product')[def.index];
   if (!row || row.classList.contains('locked')) return false;
-  row.click();
-  return true;
+  reveal(row);
+  return click(row);
 }
 
 // Crates are rendered for unlocked, unbought upgrades sorted by price. Rebuild
@@ -1750,8 +1859,8 @@ function clickUpgrade(game, def) {
   const crates = document.querySelectorAll('#upgrades .crate');
   const idx = expected.indexOf(def);
   if (idx < 0 || crates.length !== expected.length) return false;
-  crates[idx].click();
-  return true;
+  reveal(crates[idx]);
+  return click(crates[idx]);
 }
 
 // The building rows buy whatever the Buy/Sell + quantity toggles say.
@@ -1760,7 +1869,7 @@ function ensureBuyOne() {
   for (const label of ['Buy', '1']) {
     const btn = [...document.querySelectorAll('#buyControls button')].find(b => b.textContent.trim() === label);
     if (!btn) return false;
-    if (!btn.classList.contains('on')) btn.click();
+    if (!btn.classList.contains('on') && !click(btn)) return false;
   }
   const on = [...document.querySelectorAll('#buyControls button.on')].map(b => b.textContent.trim());
   return on.includes('Buy') && on.includes('1');
@@ -1803,6 +1912,7 @@ async function start() {
     onCopyStats: () => navigator.clipboard.writeText(stats.exportJson()),
     onResetStats: () => stats.reset(),
   });
+  bindInputSettings(() => ui.settings);
 
   async function rebind() {
     try {
@@ -1879,7 +1989,7 @@ function render(game, ui, autoBought) {
   const t0 = realNow();
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
-  if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, HAMMER_CPS);
+  if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
   const result = withSandbox(game, { clicksPerSec }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;

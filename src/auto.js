@@ -3,7 +3,7 @@
 // purchase goes through the game's input recorder like any other input.
 
 const MAX_CLICKS_PER_CYCLE = 15;
-const CLICK_GAP_MS = [120, 260];
+const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
 // path so steady buying never starves them.
@@ -31,7 +31,7 @@ export async function autoBuy(game, path, utilities = []) {
       clicks++;
       // The upgrade crates re-render after a purchase; wait for the next cycle.
       if (step.item.type === 'upgrade') break;
-      await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
+      if (humanMode()) await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
     }
     return clicks;
   } finally {
@@ -83,8 +83,8 @@ function clickBuilding(game, def) {
   if (!ensureBuyOne()) return false;
   const row = document.querySelectorAll('#buildings .product')[def.index];
   if (!row || row.classList.contains('locked')) return false;
-  row.click();
-  return true;
+  reveal(row);
+  return click(row);
 }
 
 // Crates are rendered for unlocked, unbought upgrades sorted by price. Rebuild
@@ -97,8 +97,8 @@ function clickUpgrade(game, def) {
   const crates = document.querySelectorAll('#upgrades .crate');
   const idx = expected.indexOf(def);
   if (idx < 0 || crates.length !== expected.length) return false;
-  crates[idx].click();
-  return true;
+  reveal(crates[idx]);
+  return click(crates[idx]);
 }
 
 // The building rows buy whatever the Buy/Sell + quantity toggles say.
@@ -107,7 +107,7 @@ function ensureBuyOne() {
   for (const label of ['Buy', '1']) {
     const btn = [...document.querySelectorAll('#buyControls button')].find(b => b.textContent.trim() === label);
     if (!btn) return false;
-    if (!btn.classList.contains('on')) btn.click();
+    if (!btn.classList.contains('on') && !click(btn)) return false;
   }
   const on = [...document.querySelectorAll('#buyControls button.on')].map(b => b.textContent.trim());
   return on.includes('Buy') && on.includes('1');

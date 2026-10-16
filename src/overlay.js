@@ -5,7 +5,7 @@ const HORIZONS = [
   ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['12h', 43200], ['2d', 172800],
 ];
 const DEFAULTS = {
-  auto: false, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
+  auto: false, stealth: true, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
 };
 const LOG_LINES = 6;
@@ -56,6 +56,7 @@ const CSS = `
 #obh details.stats { margin: 10px 0 0; }
 #obh details.ops summary { cursor: pointer; color: #f5c542; }
 #obh details.ops label { display: block; }
+#obh details.ops label.stealth { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #2a3150; }
 #obh details.ops input { width: auto; }
 #obh .opsLog { color: #8592b3; margin-top: 4px; white-space: pre-wrap; }
 #buildings .product.obh-pick { outline: 3px solid #6fdc6f; outline-offset: -3px; }
@@ -84,6 +85,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
         <label>Depth <input data-set="depth" type="number" min="1" max="5" step="1"></label>
       </div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
+        <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
@@ -104,6 +106,15 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
     el.addEventListener('change', () => {
       settings.ops[el.dataset.op] = el.checked;
       saveSettings(settings);
+    });
+  }
+
+  for (const el of root.querySelectorAll('[data-flag]')) {
+    el.checked = !!settings[el.dataset.flag];
+    el.addEventListener('change', () => {
+      settings[el.dataset.flag] = el.checked;
+      saveSettings(settings);
+      onChange(settings);
     });
   }
 

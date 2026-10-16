@@ -30,6 +30,7 @@ async function start() {
     onCopyStats: () => navigator.clipboard.writeText(stats.exportJson()),
     onResetStats: () => stats.reset(),
   });
+  bindInputSettings(() => ui.settings);
 
   async function rebind() {
     try {
@@ -106,7 +107,7 @@ function render(game, ui, autoBought) {
   const t0 = realNow();
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
-  if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, HAMMER_CPS);
+  if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
   const result = withSandbox(game, { clicksPerSec }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;
