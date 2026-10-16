@@ -4,7 +4,7 @@ Every game feature, keyed by the game's own identifier, with how Glider handles 
 
 Status: ✅ automated · 🟡 partial · ➖ nothing to do / left to the user on purpose · ❓ not analyzed
 
-Last checked against: `index-BfICFFT7.js`
+Last checked against: `index-DRE2JQgr.js`
 
 ## Actions (input codes)
 
@@ -81,6 +81,10 @@ Last checked against: `index-BfICFFT7.js`
 | `incident:viralClip` | Viral clip | ➖ | Passive bonus. |
 | `incident:weekend` | Weekend | ✅ | Work if burnout ≤50; always with the Thermos. |
 | `incident:wrongfulBans` | Wrongful bans | ✅ | Reinstate and apologize (Perception −6). |
+
+## Story overlays (no game key)
+
+- Field Trip (`#cdRoom`, build DRE2JQgr): ✅ cosmetic CD-ROM story at 100 staff, unlocks the MUSIC TO BAN TO station. Full-screen overlay, so the `popups` routine clicks Skip (skip also unlocks it; never returns).
 
 ## Weird events
 

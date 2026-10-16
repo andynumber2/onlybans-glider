@@ -37,6 +37,8 @@ function installBrowserGlobals(w, clock) {
     'Image', 'MutationObserver', 'NodeList', 'HTMLButtonElement', 'HTMLInputElement', 'SVGElement',
   ];
   for (const k of passthrough) define(k, k === 'window' ? w : w[k]);
+  // Bare calls like addEventListener("pagehide", ...) target window in a browser.
+  for (const k of ['addEventListener', 'removeEventListener', 'dispatchEvent']) define(k, w[k].bind(w));
 
   // Timers: one fake clock drives Node globals and the jsdom window alike.
   for (const k of ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame']) {
@@ -88,6 +90,9 @@ function installBrowserGlobals(w, clock) {
   });
   w.HTMLCanvasElement.prototype.getContext = () => ctx2d;
   w.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,';
+  // Web Animations: jsdom has none; animations finish at once.
+  w.Element.prototype.animate = () => ({ finished: Promise.resolve(), cancel: noop, finish: noop });
+  w.Element.prototype.getAnimations = () => [];
   // No layout engine: give every element the same box so click geometry
   // (hammer, evaders) is self-consistent.
   w.Element.prototype.getBoundingClientRect = () => ({

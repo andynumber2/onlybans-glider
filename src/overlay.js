@@ -72,7 +72,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
   root.id = 'obh';
   if (settings.collapsed) root.classList.add('collapsed');
   root.innerHTML = `
-    <header><span class="title">OnlyBans Glider</span>
+    <header><span class="title">BanGlider v${VERSION}</span>
       <span class="rate" title="Estimated income per second: production plus clicks, golden reports and ban waves on average; temporary buffs excluded"></span>
       <button data-act="auto" title="Auto-buy the plan's buy-now list">AUTO</button>
       <button data-act="refresh" title="Replan now">⟳</button>

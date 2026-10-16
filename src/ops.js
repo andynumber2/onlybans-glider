@@ -6,7 +6,7 @@
 export const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
-  { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome)' },
+  { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -533,6 +533,13 @@ const ROUTINES = {
     if (back && !back.closest('.hidden') && ready('popup:welcome', true)) {
       if (!click(back)) return null;
       return 'closed welcome card';
+    }
+    // Field Trip (CD-ROM) story: cosmetic, a full-screen overlay. Skip still
+    // unlocks the music station and sets settings.mixtape, so it never returns.
+    const cdSkip = document.querySelector('#cdRoom:not(.hidden) .cdSkip');
+    if (cdSkip && ready('popup:cd', true)) {
+      if (!click(cdSkip)) return null;
+      return 'skipped field trip';
     }
     return null;
   },
