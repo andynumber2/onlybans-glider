@@ -5,7 +5,7 @@
 // One process = one simulation (the game module is a singleton).
 import { JSDOM } from 'jsdom';
 import FakeTimers from '@sinonjs/fake-timers';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { performance as realPerf } from 'node:perf_hooks';
@@ -118,14 +118,33 @@ function installBrowserGlobals(w, clock) {
   define('indexedDB', undefined);
 }
 
-export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), userscript = null, settings = null } = {}) {
+// Patches the game's action dispatcher (the function every recorded input goes
+// through, found by content: `function NAME(e,t){switch(e[0]){case"c":`) so
+// each call is reported to globalThis.__obAction(action, ui), and exports it
+// as __dispatch so a replay can apply logged actions the way the server does.
+function hookDispatcher(src) {
+  const m = src.match(/function (\w+)\(e,t\)\{switch\(e\[0\]\)\{case"c":/);
+  if (!m) throw new Error('action dispatcher not found in bundle');
+  const name = m[1];
+  const hooked = `function ${name}(e,t){globalThis.__obAction&&globalThis.__obAction(e,t);switch(e[0]){case"c":`;
+  return src.replace(m[0], hooked) + `\nexport{${name} as __dispatch};\n`;
+}
+
+export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), userscript = null, settings = null, hookActions = false, bundle = null } = {}) {
   const html = await readFile(resolve(SITE, 'index.html'), 'utf8');
-  const bundleName = html.match(/assets\/(index-[\w-]+\.js)/)[1];
+  // bundle: an older build in research/site/ (e.g. index-RhCrl34K.js) instead of the current one.
+  const bundleName = bundle ?? html.match(/assets\/(index-[\w-]+\.js)/)[1];
   // Serve it from an assets/ path like the live site, which is how the
-  // userscript recognizes the game's script tag.
-  const assetPath = resolve(SITE, 'assets', bundleName);
+  // userscript recognizes the game's script tag. The hooked copy gets its own
+  // name so parallel plain runs never load it.
   await mkdir(resolve(SITE, 'assets'), { recursive: true });
-  await copyFile(resolve(SITE, bundleName), assetPath);
+  let assetPath = resolve(SITE, 'assets', bundleName);
+  if (hookActions) {
+    assetPath = resolve(SITE, 'assets', bundleName.replace(/\.js$/, '-hook.js'));
+    await writeFile(assetPath, hookDispatcher(await readFile(resolve(SITE, bundleName), 'utf8')));
+  } else {
+    await copyFile(resolve(SITE, bundleName), assetPath);
+  }
   const bundleUrl = pathToFileURL(assetPath).href;
 
   // Node has no requestAnimationFrame; give it one so the clock can fake it.
@@ -162,7 +181,7 @@ export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), use
   }
 
   return {
-    clock, window: w, logic, G: logic.G, bundleName,
+    clock, window: w, logic, G: logic.G, bundleName, dispatch: mod.__dispatch ?? null,
     // Advance game time in chunks, letting promises settle between them.
     async run(seconds, onSecond) {
       for (let s = 0; s < seconds; s++) {

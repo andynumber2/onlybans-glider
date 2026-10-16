@@ -37,11 +37,12 @@ found['weird'] = keys_in(r'(\w+):\{seconds:\d+,minRunSeconds')
 # Relics: {id:"name",icon:...,tier:"..."}.
 found['relic'] = keys_in(r'\{id:"(\w+)",icon:"[^"]*",name:[^,]+,tier:"')
 
-# Upgrade kinds registered with gt({...kind:"x"}).
-found['upgradeKind'] = keys_in(r'gt\(\{id:[^,]+,kind:"(\w+)"')
+# Upgrade kinds registered with REG({...kind:"x"}). REG is a minified name
+# that changes per build, so match any identifier.
+found['upgradeKind'] = keys_in(r'[\w$]+\(\{id:[^,]+,kind:"(\w+)"')
 
-# Tools: generated from an array via ARR.forEach(... gt({id:`tool:${e.id}` ...
-m = re.search(r'([\w$]+)\.forEach\(\(e,t\)=>gt\(\{id:`tool:', s)
+# Tools: generated from an array via ARR.forEach(... REG({id:`tool:${e.id}` ...
+m = re.search(r'([\w$]+)\.forEach\(\(e,t\)=>[\w$]+\(\{id:`tool:', s)
 found['tool'] = []
 if m:
     start = re.search(r'[,;\s]' + re.escape(m.group(1)) + r'=\[', s)

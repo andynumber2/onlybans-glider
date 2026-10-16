@@ -4,6 +4,15 @@
 
 const MAX_CLICKS_PER_CYCLE = 15;
 const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
+// Buy only once the bank clears the price by this factor. The leaderboard
+// server replays our inputs and may compute bans a hair differently (another
+// JS engine's Math.pow etc.); a purchase it can't afford is rejected there and
+// its copy of the game falls behind for good.
+const BUY_MARGIN = 1 + 1e-6;
+
+function canAfford(game, price) {
+  return game.G.s.bans >= price * BUY_MARGIN;
+}
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
 // path so steady buying never starves them.
@@ -18,12 +27,12 @@ export async function autoBuy(game, path, utilities = []) {
   try {
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
-    const util = utilities.find(u => u.price <= game.G.s.bans && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
+    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
     if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
     let clicks = 0;
     for (const step of path) {
       if (step.at > 0 || clicks >= MAX_CLICKS_PER_CYCLE || game.G.ascending) break;
-      if (game.G.s.bans < step.price) break;
+      if (!canAfford(game, step.price)) break;
       let ok = false;
       if (step.item.type === 'building') ok = clickBuilding(game, step.item.def);
       else ok = clickUpgrade(game, step.item.def);
@@ -59,7 +68,7 @@ export function armsRacePick(game) {
   if (!ar || ar.detente) return null;
   const affordable = (def, maxSeconds) => {
     const price = logic.upgradePrice(def);
-    return price <= s.bans && price <= maxSeconds * G.bps;
+    return canAfford(game, price) && price <= maxSeconds * G.bps;
   };
   const available = id => {
     const def = upgrades.find(u => u.id === id);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.20.0
+// @version      0.20.3
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,7 +11,7 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-F1HYSyWE.js';
+const ANALYZED_BUILD = 'index-BR5b_Cr7.js';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -232,6 +232,29 @@ async function bindGame(win) {
   return { logic, G: logic.G, buildings, upgrades, dupe, relics, build: script.src.split('/').pop() };
 }
 
+// The game's calculateGains() rewrites its derived production numbers. The
+// game only refreshes them about once a second, and every tick in between
+// earns with the old ones, so recomputing them mid-second changes what this
+// browser earns versus the leaderboard server's replay of the same inputs.
+// That float-level drift compounds once the server rejects a purchase this
+// browser could just afford. So every live calculation here restores the
+// derived numbers exactly as they were.
+const DERIVED_FIELDS = ['bps', 'rawBps', 'globalMult', 'clickPower', 'trust', 'recalc'];
+
+function saveDerived(G) {
+  const saved = { each: { ...G.buildingEach } };
+  for (const k of DERIVED_FIELDS) saved[k] = G[k];
+  return saved;
+}
+
+function restoreDerived(G, saved) {
+  for (const k of DERIVED_FIELDS) G[k] = saved[k];
+  for (const k of Object.keys(G.buildingEach)) {
+    if (k in saved.each) G.buildingEach[k] = saved.each[k];
+    else delete G.buildingEach[k];
+  }
+}
+
 // Runs fn(sim) with the live state temporarily mutated, then restores it.
 // Synchronous on purpose: the game loop cannot interleave with us.
 // Bundles look this many units ahead for a department's next unlock.
@@ -241,6 +264,7 @@ function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
   const { logic, G, buildings, upgrades } = game;
   const s = G.s;
   const savedBuffs = s.buffs;
+  const derived = saveDerived(G);
   const undoStack = [];
   // Temporary buffs are excluded so advice doesn't swing during golden events.
   s.buffs = [];
@@ -341,7 +365,7 @@ function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
   } finally {
     while (undoStack.length) undoStack.pop()();
     s.buffs = savedBuffs;
-    logic.calculateGains();
+    restoreDerived(G, derived);
   }
 }
 
@@ -422,6 +446,7 @@ function buffCost(game, buffKey) {
   const saved = s.buffs;
   const buff = saved.find(b => b.key === buffKey);
   if (!buff) return 0;
+  const derived = saveDerived(G);
   try {
     s.buffs = saved.filter(b => b !== buff);
     logic.calculateGains();
@@ -431,7 +456,7 @@ function buffCost(game, buffKey) {
     return Math.max(0, without - G.bps);
   } finally {
     s.buffs = saved;
-    logic.calculateGains();
+    restoreDerived(G, derived);
   }
 }
 
@@ -1368,6 +1393,23 @@ const MAX_WAVES = 1000;
 const MAX_RECENT_ACTIONS = 300;
 const TIER_NAMES = ['CLEAN', 'APPEALS', 'TRENDING', 'FAMOUS FP', 'SCANDAL'];
 
+// The leaderboard's last verified score, from the game's own leaderboard state
+// in localStorage (key click2ban-lb, field verified.score). That value also
+// holds the pending input log, so only the small field is pulled out, without
+// parsing the whole thing. Null when not joined or not found.
+const LB_KEY = 'click2ban-lb';
+const VERIFIED_RE = /"verified":\{"score":([0-9.eE+-]+)/;
+
+function verifiedScore() {
+  try {
+    const m = (localStorage.getItem(LB_KEY) ?? '').match(VERIFIED_RE);
+    if (m) return Number(m[1]);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function emptyStats() {
   return { started: Date.now(), snapshots: [], waves: [], actionCounts: {}, recentActions: [] };
 }
@@ -1431,7 +1473,8 @@ async function createStats() {
       if (now - lastSnapshot >= SNAPSHOT_MS) {
         lastSnapshot = now;
         push(data.snapshots, {
-          t: now, bps: G.bps, rawBps: G.rawBps, bans: s.bans,
+          t: now, T: G.T, all: s.bansAllTime, verified: verifiedScore(),
+          bps: G.bps, rawBps: G.rawBps, bans: s.bans,
           perception: s.perception, reality: s.reality, cred: t.cred,
           burnout: s.staff.burnout, notch: t.notch, meter: s.waveMeter, waves: s.wavesLaunched,
         }, MAX_SNAPSHOTS);
@@ -1766,6 +1809,15 @@ function esc(s) {
 
 const MAX_CLICKS_PER_CYCLE = 15;
 const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
+// Buy only once the bank clears the price by this factor. The leaderboard
+// server replays our inputs and may compute bans a hair differently (another
+// JS engine's Math.pow etc.); a purchase it can't afford is rejected there and
+// its copy of the game falls behind for good.
+const BUY_MARGIN = 1 + 1e-6;
+
+function canAfford(game, price) {
+  return game.G.s.bans >= price * BUY_MARGIN;
+}
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
 // path so steady buying never starves them.
@@ -1780,12 +1832,12 @@ async function autoBuy(game, path, utilities = []) {
   try {
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
-    const util = utilities.find(u => u.price <= game.G.s.bans && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
+    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
     if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
     let clicks = 0;
     for (const step of path) {
       if (step.at > 0 || clicks >= MAX_CLICKS_PER_CYCLE || game.G.ascending) break;
-      if (game.G.s.bans < step.price) break;
+      if (!canAfford(game, step.price)) break;
       let ok = false;
       if (step.item.type === 'building') ok = clickBuilding(game, step.item.def);
       else ok = clickUpgrade(game, step.item.def);
@@ -1821,7 +1873,7 @@ function armsRacePick(game) {
   if (!ar || ar.detente) return null;
   const affordable = (def, maxSeconds) => {
     const price = logic.upgradePrice(def);
-    return price <= s.bans && price <= maxSeconds * G.bps;
+    return canAfford(game, price) && price <= maxSeconds * G.bps;
   };
   const available = id => {
     const def = upgrades.find(u => u.id === id);

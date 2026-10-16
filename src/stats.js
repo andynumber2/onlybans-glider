@@ -15,6 +15,23 @@ const MAX_WAVES = 1000;
 const MAX_RECENT_ACTIONS = 300;
 export const TIER_NAMES = ['CLEAN', 'APPEALS', 'TRENDING', 'FAMOUS FP', 'SCANDAL'];
 
+// The leaderboard's last verified score, from the game's own leaderboard state
+// in localStorage (key click2ban-lb, field verified.score). That value also
+// holds the pending input log, so only the small field is pulled out, without
+// parsing the whole thing. Null when not joined or not found.
+const LB_KEY = 'click2ban-lb';
+const VERIFIED_RE = /"verified":\{"score":([0-9.eE+-]+)/;
+
+function verifiedScore() {
+  try {
+    const m = (localStorage.getItem(LB_KEY) ?? '').match(VERIFIED_RE);
+    if (m) return Number(m[1]);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function emptyStats() {
   return { started: Date.now(), snapshots: [], waves: [], actionCounts: {}, recentActions: [] };
 }
@@ -78,7 +95,8 @@ export async function createStats() {
       if (now - lastSnapshot >= SNAPSHOT_MS) {
         lastSnapshot = now;
         push(data.snapshots, {
-          t: now, bps: G.bps, rawBps: G.rawBps, bans: s.bans,
+          t: now, T: G.T, all: s.bansAllTime, verified: verifiedScore(),
+          bps: G.bps, rawBps: G.rawBps, bans: s.bans,
           perception: s.perception, reality: s.reality, cred: t.cred,
           burnout: s.staff.burnout, notch: t.notch, meter: s.waveMeter, waves: s.wavesLaunched,
         }, MAX_SNAPSHOTS);

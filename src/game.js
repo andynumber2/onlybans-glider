@@ -39,6 +39,29 @@ export async function bindGame(win) {
   return { logic, G: logic.G, buildings, upgrades, dupe, relics, build: script.src.split('/').pop() };
 }
 
+// The game's calculateGains() rewrites its derived production numbers. The
+// game only refreshes them about once a second, and every tick in between
+// earns with the old ones, so recomputing them mid-second changes what this
+// browser earns versus the leaderboard server's replay of the same inputs.
+// That float-level drift compounds once the server rejects a purchase this
+// browser could just afford. So every live calculation here restores the
+// derived numbers exactly as they were.
+const DERIVED_FIELDS = ['bps', 'rawBps', 'globalMult', 'clickPower', 'trust', 'recalc'];
+
+function saveDerived(G) {
+  const saved = { each: { ...G.buildingEach } };
+  for (const k of DERIVED_FIELDS) saved[k] = G[k];
+  return saved;
+}
+
+function restoreDerived(G, saved) {
+  for (const k of DERIVED_FIELDS) G[k] = saved[k];
+  for (const k of Object.keys(G.buildingEach)) {
+    if (k in saved.each) G.buildingEach[k] = saved.each[k];
+    else delete G.buildingEach[k];
+  }
+}
+
 // Runs fn(sim) with the live state temporarily mutated, then restores it.
 // Synchronous on purpose: the game loop cannot interleave with us.
 // Bundles look this many units ahead for a department's next unlock.
@@ -48,6 +71,7 @@ export function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn)
   const { logic, G, buildings, upgrades } = game;
   const s = G.s;
   const savedBuffs = s.buffs;
+  const derived = saveDerived(G);
   const undoStack = [];
   // Temporary buffs are excluded so advice doesn't swing during golden events.
   s.buffs = [];
@@ -148,7 +172,7 @@ export function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn)
   } finally {
     while (undoStack.length) undoStack.pop()();
     s.buffs = savedBuffs;
-    logic.calculateGains();
+    restoreDerived(G, derived);
   }
 }
 
@@ -229,6 +253,7 @@ export function buffCost(game, buffKey) {
   const saved = s.buffs;
   const buff = saved.find(b => b.key === buffKey);
   if (!buff) return 0;
+  const derived = saveDerived(G);
   try {
     s.buffs = saved.filter(b => b !== buff);
     logic.calculateGains();
@@ -238,7 +263,7 @@ export function buffCost(game, buffKey) {
     return Math.max(0, without - G.bps);
   } finally {
     s.buffs = saved;
-    logic.calculateGains();
+    restoreDerived(G, derived);
   }
 }
 
