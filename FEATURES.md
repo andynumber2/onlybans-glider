@@ -4,7 +4,7 @@ Every game feature, keyed by the game's own identifier, with how Glider handles 
 
 Status: ✅ automated · 🟡 partial · ➖ nothing to do / left to the user on purpose · ❓ not analyzed
 
-Last checked against: `index-DRE2JQgr.js`
+Last checked against: `index-tdry9Bxz.js`
 
 ## Actions (input codes)
 

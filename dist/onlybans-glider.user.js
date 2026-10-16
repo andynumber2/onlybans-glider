@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.20.4
+// @version      0.20.5
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,8 +11,8 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-DRE2JQgr.js';
-const VERSION = '0.20.4';
+const ANALYZED_BUILD = 'index-tdry9Bxz.js';
+const VERSION = '0.20.5';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
