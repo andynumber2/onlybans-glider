@@ -135,7 +135,15 @@ function hookDispatcher(src) {
   return src.replace(m[0], hooked) + `\nexport{${name} as __dispatch};\n`;
 }
 
-export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), userscript = null, settings = null, hookActions = false, bundle = null } = {}) {
+// save: text of a game save exactly as localStorage holds it under
+// `click2ban-save` (plain JSON; copy it in the browser console with
+// `copy(localStorage.getItem('click2ban-save'))`). The fake clock starts one
+// second after the save's lastSave so the game grants no offline earnings.
+export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null } = {}) {
+  if (startMs === null) {
+    startMs = Date.UTC(2026, 9, 15);
+    if (save) startMs = JSON.parse(save).lastSave + 1000;
+  }
   const html = await readFile(resolve(SITE, 'index.html'), 'utf8');
   // bundle: an older build in research/site/ (e.g. index-RhCrl34K.js) instead of the current one.
   const bundleName = bundle ?? html.match(/assets\/(index-[\w-]+\.js)/)[1];
@@ -177,6 +185,7 @@ export async function createSim({ seed = 1, startMs = Date.UTC(2026, 9, 15), use
   w.document.head.appendChild(tag);
 
   if (settings) w.localStorage.setItem('onlybans-glider-settings', JSON.stringify(settings));
+  if (save) w.localStorage.setItem('click2ban-save', save);
   const mod = await import(bundleUrl);
   const logic = Object.values(mod).find(v => v && typeof v.calculateGains === 'function');
 

@@ -58,7 +58,7 @@ async function start() {
       return;
     }
     const plannerMs = realNow() - t0;
-    if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities);
+    if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities, ui.settings.ops);
     return plannerMs;
   }
 
@@ -173,6 +173,12 @@ function render(game, ui, autoBought) {
     html += `<h4>Arms race (auto: escalate x3; truce only near review bomb; no détente)</h4>`;
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
+
+  const seq = sequelStatus(game.G, settings.ops);
+  html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
+  html += `<div>+${fmtNum(seq.pending)} ⭐ pending · ×${seq.multNow.toFixed(2)} → ×${seq.multAfter.toFixed(2)}` +
+    `${seq.ship ? ' · <b>ship</b>' : ''}</div>`;
+  if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;

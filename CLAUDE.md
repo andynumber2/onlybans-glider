@@ -53,6 +53,8 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 - Dupe gold stops growing once `hotfix` is done.
 - Golden reports average ~100% of production when all are clicked (455 s EV per report, one per ~447 s; red reports ~721 s, so they are clicked too). The planner's `rate()` multiplies by `1 + goldenShare + waveShare` (`src/game.js`) so event upgrades and the Dashboard get real values. Outcome mix and EVs are simulation estimates, not measured.
 - Arms race decision: escalate all three, skip Détente (estimated +46-56% vs +44% with Détente, because red reports offset the perception cost), truce only when perception >= 80. Arms stage getter is `armsRace.stage` (0 during truce/détente).
+- Sequels (build B688DHuD): stars = exact integer cbrt(bansAllTime / 1e12); shipping (`a`) adds stars − level to level (kept) and reputation (spent); production ×(1 + level × 1% × share), share = owned review tiers 5/20/25/25/25%. Shop (`p`, crates in `PRESTIGE` order, no key attribute), launch (`l`). Reset keeps achievements, prestige, notch, relics (contraband is removed at the next launch). The Boss Chest offers contraband at launch; we leave it in the bag. Timing and shop rules: `sequelPlan` in `src/planner.js`.
+- Audit costs 20 s of raw production (min 25/s, halved by the SQL tool). The auto-buyer keeps that in reserve (`auditReserve`); without it, early in a run the audit never fired and the first post-sequel wave was a SCANDAL.
 
 ## Offline simulator (preferred way to test automation)
 
@@ -92,11 +94,11 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 - Lever: without the Thermos, pull whenever ready (read from code; untestable, every seed gets the Thermos first). With the Thermos, thresholds 95/80/60/40 showed no consistent winner; kept 95.
 - Ban waves: hold to 267% (×6), ~4.7× bans vs 100% on all 3 seeds (v0.19.0). 300% and skipping Agentic AI (which launches ~half the waves at 200%) made no consistent difference.
 - Anti anti-cheat on vs off: ~22× fewer bans with human pacing (every seed). User keeps it on.
+- Sequels (from the user's 2026-10-18 save, seeds 7-9): 3 h, never 26.15 / ship at ×2 27.05 / ×4 27.17 / ×2 spending all reputation 26.81 (log10 bans); 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19, which shipped 5-6 small sequels because waves make gains bursty. Shipped ×4, saving reputation for the next review tier (v0.21.0). `experiments.mjs ... sequel` sweeps ×3/×4/×6.
 
 ## Next up (queue)
 
-1. Sequel timing and prestige upgrades (currently manual). Facts read from code: stars = floor(cbrt(bansAllTime / 1e12)); shipping adds stars − level; stars are not spent. Reputation (spent) buys Franchise Legacy 1, Mixed Reviews 11 (5% of +1%/star), Mostly Positive 1,111 (25% total), Very Positive 111,111 (50%), Overwhelmingly Positive 11,111,111 (75%); production bonus = level × 1% × that share. First sequel pays once ~1,123 stars (~1.4e21 all-time) buy the first three: ×3.8 production (computed, not simulated). Proper answer needs simulator snapshot/restore and multi-run sims (item 2).
-2. Deferred (user, 2026-10-15): late-game simulation. Start sims from the user's exported late save `research/tmp/late-save.txt` (9.38e24 all-time, 0 sequels, gitignored) via simulator save/restore (game save key `click2ban-save`, format base64 JSON + `|C2B`).
+1. Sequel follow-ups: watch the user's first automated sequels. Late-game sims start from a save: `node scripts/sim/run.mjs --save research/tmp/save-2026-10-18.txt` (7.72e25 all-time, 0 sequels, gitignored; copy a fresh one in the browser console with `copy(localStorage.getItem('click2ban-save'))`, plain JSON).
 
 ## Open items
 
@@ -104,6 +106,6 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 - Real-play confirmation (v0.15.0, 2026-10-15): audit-before-launch works (from wave 26 on, 42 of 51 waves CLEAN vs 4 of 12 tier-2 before); notch projected heat runs about 0.75 to 0.85× high (cautious).
 - ➖ rows in `FEATURES.md` were audited on 2026-10-15: none has a player input that is not already automated (incl. The Hammer incident, Throwback week, golden outcomes; TDASH's drifting fraud case is clicked by the Legends routine).
 - Temporary buffs do not leak into planning (read from code, build RhCrl34K): Ban wave ×7, Launch Day ×2, department stops etc. are all `s.buffs` entries; the game's `rawBps` already excludes `multBps` buffs, and `withSandbox` empties `s.buffs` before recomputing.
-- Prestige (Ship a Sequel), seed funding, and prestige upgrades are left to the user.
+- Seed funding is left to the user (first run only).
 - Tally Counter relic: nothing to exploit (it removes the verdict roll after 10 right audit answers; waves can't be cancelled, and audits are already perfect).
-- The game's telemetry (`/api/ping`, since build BfICFFT7) reports a persistent `click2ban-id` plus totals (clicks, run seconds, golden clicked, waves). Since build RhCrl34K it also sends an `events` object (dupe outcomes, pizza party, review bomb, priority right/wrong/escaped, verdict tier counts, weird events seen; read from code). The hammer clicker is humanized (bursts, pauses, breaks; ~4 clicks/s average) for that reason.
+- The game's telemetry (`/api/ping`, since build BfICFFT7) reports a persistent `click2ban-id` plus totals (clicks, run seconds, golden clicked, waves). Since build RhCrl34K it also sends an `events` object (dupe outcomes, pizza party, review bomb, priority right/wrong/escaped, verdict tier counts, weird events seen; read from code). Since build DjdI4Fjz the ping's counts are cumulative across sequels (localStorage `click2ban-ever`) and include `dupe:survived`. The hammer clicker is humanized (bursts, pauses, breaks; ~4 clicks/s average) for that reason.

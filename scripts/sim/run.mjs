@@ -4,10 +4,12 @@
 //   --set auto=false            plain game, no automation
 //   --set ops.notch=false       disable one routine
 //   --bundle index-X.js         run an older game build from research/site/
+//   --save FILE                 start from a game save (localStorage `click2ban-save` text)
 //   --record FILE               save every game action (with its tick and the
 //                               game's RNG state) for scripts/sim/replay.mjs
 // Prints a JSON summary on the last line for scripting.
 import { performance as realPerf } from 'node:perf_hooks';
+import { readFile } from 'node:fs/promises';
 import { createSim } from './harness.mjs';
 
 const args = process.argv.slice(2);
@@ -18,6 +20,7 @@ for (let i = 0; i < args.length; i += 2) {
   else if (k === 'relic') (opt.relics ??= []).push(args[i + 1]);
   else if (k === 'record') opt.record = args[i + 1];
   else if (k === 'bundle') opt.bundle = args[i + 1];
+  else if (k === 'save') opt.save = args[i + 1];
   else opt[k] = Number(args[i + 1]);
 }
 
@@ -36,7 +39,8 @@ for (const kv of opt.set) {
 }
 
 const wall0 = realPerf.now();
-const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null });
+const save = opt.save ? (await readFile(opt.save, 'utf8')).trim() : null;
+const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save });
 // Every action the game applies, as the server would receive it: tick, the
 // action, and the RNG state and all-time bans just before it was applied.
 const recorded = [];
@@ -134,6 +138,8 @@ const summary = {
   goldenClicked: G.s.eventsClicked, goldenMissed: G.s.eventsMissed, clicks: G.s.clicks,
   upgrades: G.s.upgradesBought.size, perception: G.s.perception, burnout: G.s.staff.burnout,
   relics: relicsOwned, actions: actionCounts,
+  sequels: G.s.prestige.sequels, prestigeLevel: G.s.prestige.level, reputation: G.s.prestige.reputation,
+  prestigeOwned: [...G.s.prestige.upgrades],
   plannerMs: plannerStats(plannerSamples),
   agentOwned: G.s.upgradesBought.has("tool:agent"),
   rateChecks,
@@ -141,7 +147,7 @@ const summary = {
 };
 if (opt.record) {
   const { writeFile } = await import('node:fs/promises');
-  await writeFile(opt.record, JSON.stringify({ seed: opt.seed, minutes: opt.minutes, endT: G.T, endRng: G.s.rng, endAll: G.s.bansAllTime, actions: recorded }));
+  await writeFile(opt.record, JSON.stringify({ seed: opt.seed, minutes: opt.minutes, save: opt.save ?? null, endT: G.T, endRng: G.s.rng, endAll: G.s.bansAllTime, actions: recorded }));
 }
 console.log(JSON.stringify(summary));
 process.exit(0);

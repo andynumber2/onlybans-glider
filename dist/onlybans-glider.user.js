@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.20.8
+// @version      0.21.1
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,8 +11,8 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-B688DHuD.js';
-const VERSION = '0.20.8';
+const ANALYZED_BUILD = 'index-DjdI4Fjz.js';
+const VERSION = '0.21.1';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -189,6 +189,94 @@ function groupSteps(steps, keyOf) {
     }
   }
   return out;
+}
+
+// Prestige ("Ship a Sequel"). Read from code (build B688DHuD): stars =
+// integer cbrt(bansAllTime / 1e12); shipping adds stars − level to both
+// level (kept) and reputation (spent here). Production ×(1 + level × 1% ×
+// share), where share sums the owned review tiers. The order matches the
+// game's crate order on the "Between Games" screen.
+const PRESTIGE = [
+  { key: 'legacy', price: 1 },
+  { key: 'reputation1', price: 11, requires: 'legacy', share: 0.05 },
+  { key: 'reputation2', price: 1111, requires: 'reputation1', share: 0.2 },
+  { key: 'reputation3', price: 111111, requires: 'reputation2', share: 0.25 },
+  { key: 'reputation4', price: 11111111, requires: 'reputation3', share: 0.25 },
+  { key: 'reputation5', price: 1111111111, requires: 'reputation4', share: 0.25 },
+  { key: 'starterMacros', price: 50, requires: 'legacy' },
+  { key: 'starterMods', price: 150, requires: 'starterMacros' },
+  { key: 'offline1', price: 1, requires: 'legacy' },
+  { key: 'offline2', price: 100, requires: 'offline1' },
+  { key: 'offline3', price: 10000, requires: 'offline2' },
+  { key: 'luckyReports1', price: 77, requires: 'legacy' },
+  { key: 'luckyReports2', price: 777, requires: 'luckyReports1' },
+  { key: 'luckyReports3', price: 7777, requires: 'luckyReports2' },
+  { key: 'cheapUpgrades', price: 99, requires: 'legacy' },
+  { key: 'cheapBuildings', price: 99, requires: 'legacy' },
+];
+const PRESTIGE_BY_KEY = Object.fromEntries(PRESTIGE.map(p => [p.key, p]));
+// Purchase priority: the review tiers (the production bonus) first, then the
+// rest by value per star.
+const PRESTIGE_PRIORITY = ['legacy', 'reputation1', 'reputation2', 'reputation3', 'reputation4', 'reputation5',
+  'starterMacros', 'starterMods', 'cheapBuildings', 'cheapUpgrades', 'luckyReports1', 'luckyReports2',
+  'luckyReports3', 'offline1', 'offline2', 'offline3'];
+const TIERS = PRESTIGE.filter(p => p.share);
+// A non-tier item is bought only if it leaves enough reputation for the next
+// review tier, or costs at most this share of that tier's price.
+const RESERVE_FREE_SHARE = 0.01;
+// Ship once production after the sequel (incl. the shop buys) is at least
+// this many times the current one. Simulated from the user's late save
+// (2026-10-18, seeds 7-9): 3 h, never 26.15 / ×2 27.05 / ×4 27.17 log10
+// bans; 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19,
+// which shipped 5-6 small sequels because waves make gains bursty.
+const SHIP_GAIN = 4;
+
+function prestigeStars(bansAllTime) {
+  if (!(bansAllTime >= 1e12)) return 0;
+  const x = bansAllTime / 1e12;
+  let t = Math.floor(Math.cbrt(x));
+  while ((t + 1) ** 3 <= x) t++;
+  while (t ** 3 > x) t--;
+  return t;
+}
+
+function prestigeShare(owned) {
+  return TIERS.reduce((sum, p) => sum + (owned.has(p.key) ? p.share : 0), 0);
+}
+
+// What to buy with `reputation`, in purchase order.
+function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
+  const have = new Set(owned);
+  const buys = [];
+  let rep = reputation;
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const key of PRESTIGE_PRIORITY) {
+      const p = PRESTIGE_BY_KEY[key];
+      if (have.has(key) || (p.requires && !have.has(p.requires)) || p.price > rep) continue;
+      if (!p.share && !spendAll) {
+        const next = TIERS.find(t => !have.has(t.key));
+        if (next && p.price > next.price * RESERVE_FREE_SHARE && rep - p.price < next.price) continue;
+      }
+      have.add(key);
+      buys.push(key);
+      rep -= p.price;
+      progress = true;
+      break;
+    }
+  }
+  return buys;
+}
+
+// Should we ship now, and what would it buy? `owned` is a Set of keys.
+function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
+  const pending = Math.max(0, prestigeStars(bansAllTime) - level);
+  const multNow = 1 + level * 0.01 * prestigeShare(owned);
+  const buys = prestigeBuys(owned, reputation + pending, { spendAll });
+  const after = new Set([...owned, ...buys]);
+  const multAfter = 1 + (level + pending) * 0.01 * prestigeShare(after);
+  return { pending, buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
 }
 
 // ---- src/game.js ----
@@ -589,6 +677,7 @@ const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
   { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
+  { key: 'sequel', label: 'Ship sequels (when production would at least double) and buy the Reputation shop' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -725,6 +814,14 @@ const WAVE_LAUNCH_AT = 2.67;
 function waveLaunchAt(enabled) {
   return enabled.waveAt ?? WAVE_LAUNCH_AT;
 }
+// During a ×2+ boost a wave launches at 100%: its multiplier stacks on the boost.
+function effectiveLaunchAt(G, enabled) {
+  if (productionBoost(G) >= 2) return 1;
+  return waveLaunchAt(enabled);
+}
+// Skipping the audit to catch a boost is only worth it when the wave would
+// stay below tier 2 (APPEALS at most) without one.
+const SKIP_AUDIT_MAX_HEAT = 15;
 
 const PIZZA_REACTION_MS = [120, 320];
 const PIZZA_CUTS_EACH = 4;
@@ -1126,6 +1223,42 @@ const ROUTINES = {
     return null;
   },
 
+  // Ship a Sequel when sequelPlan says so (src/planner.js), confirm, buy the
+  // Reputation shop one crate at a time, then launch.
+  sequel(G, enabled) {
+    const p = G.s.prestige;
+    const opts = sequelOptions(enabled);
+    if (G.ascending) {
+      const screen = document.querySelector('#ascendScreen');
+      if (!screen) return null;
+      // Crates carry no key; they are rendered in PRESTIGE order.
+      const crates = screen.querySelectorAll('.prestigeGrid .crate');
+      const [next] = crates.length === PRESTIGE.length ? prestigeBuys(p.upgrades, p.reputation, opts) : [];
+      if (next) {
+        const crate = crates[PRESTIGE.findIndex(x => x.key === next)];
+        if (!ready('sequel:buy:' + next, true)) return null;
+        if (!click(crate)) return null;
+        return 'prestige: ' + next;
+      }
+      const launch = usable(screen.querySelector('#launchSequel'));
+      if (!ready('sequel:launch', !!launch)) return null;
+      if (!click(launch)) return null;
+      return 'launched sequel ' + p.sequels;
+    }
+    const confirm = [...document.querySelectorAll('#modal:not(.hidden) .buttons button')]
+      .find(b => b.textContent === 'Ship it!');
+    if (confirm) {
+      if (!ready('sequel:confirm', true)) return null;
+      if (!click(confirm)) return null;
+      return 'shipped a sequel';
+    }
+    const plan = sequelStatus(G, enabled);
+    const btn = usable('#sequelButton');
+    if (!ready('sequel:ship', !!btn && plan.ship)) return null;
+    if (!click(btn)) return null;
+    return `ship? +${plan.pending} ⭐, ×${plan.multNow.toFixed(2)} → ×${plan.multAfter.toFixed(2)}`;
+  },
+
   coinLock(G) {
     const meta = G.s.meta && G.s.meta.cur;
     const btn = usable('#coinBtn');
@@ -1157,7 +1290,7 @@ const ROUTINES = {
     }
     const btn = usable('#auditBtn');
     const pile = truth.pile;
-    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * waveLaunchAt(enabled);
+    const nearLaunch = G.s.waveMeter >= AUDIT_AT_METER * effectiveLaunchAt(G, enabled);
     if (!ready('audit-start', !!btn && nearLaunch && !(pile && pile.audited))) return null;
     if (!click(btn)) return null;
     return 'audit started';
@@ -1179,15 +1312,15 @@ const ROUTINES = {
     const btn = usable('#waveBtn');
     // During a ×2+ boost, launch at 100% regardless: the wave multiplies into it.
     const boost = productionBoost(G);
-    let launchAt = waveLaunchAt(enabled);
-    if (boost >= 2) launchAt = 1;
-    const charged = !!btn && G.s.waveMeter >= launchAt;
+    const charged = !!btn && G.s.waveMeter >= effectiveLaunchAt(G, enabled);
     const auditOpen = !!(truth.audit && truth.audit.cases);
     const auditSoon = auditOpen || (enabled.audit && G.s.buildings.moderator.amount > 0 &&
       !(pile && pile.audited) && truth.auditCd / TICKS_PER_SEC <= AUDIT_WAIT_SECONDS);
     // The wave's ×3+ multiplies into an active boost, so don't wait for the
-    // audit then (unless one is already open and nearly done).
-    const waitForAudit = auditOpen || (auditSoon && boost < 2);
+    // audit then, unless one is already open or the pile is dirty enough
+    // that an unaudited wave would be tier 2+ (early in a run, after a sequel).
+    const dirty = (projectedHeat(G, { ...enabled, audit: false }) ?? 0) >= SKIP_AUDIT_MAX_HEAT;
+    const waitForAudit = auditOpen || (auditSoon && (boost < 2 || dirty));
     if (!ready('wave', charged && !waitForAudit, boost >= 2 ? FAST_REACTION_MS : REACTION_MS)) return null;
     if (!click(btn)) return null;
     return boost >= 2 ? `launched ban wave into a ×${boost.toFixed(1)} boost` : 'launched ban wave';
@@ -1348,6 +1481,30 @@ function clickHammer() {
   pointerDown(el, x, y);
 }
 
+// Bans to keep unspent so the next audit can be paid. Read from code: an
+// audit costs 20 s of raw production (at least 25 bans/s), halved by the SQL
+// tool. Without this reserve the auto-buyer spends the bank to zero early in a
+// run, the audit never fires, and projectedHeat (which counts on it) lets the
+// notch run loose: a SCANDAL wave right after a sequel launch.
+function auditReserve(G, enabled) {
+  if (!enabled.audit || G.s.buildings.moderator.amount <= 0) return 0;
+  if (G.s.truth.pile && G.s.truth.pile.audited) return 0;
+  let cost = Math.max(G.rawBps * 20, 25 * 20);
+  if (G.s.upgradesBought.has('tool:sql')) cost *= 0.5;
+  return Math.ceil(cost);
+}
+
+// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
+function sequelOptions(enabled) {
+  return { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
+}
+
+function sequelStatus(G, enabled) {
+  const p = G.s.prestige;
+  return sequelPlan({ level: p.level, reputation: p.reputation, owned: p.upgrades, bansAllTime: G.s.bansAllTime },
+    sequelOptions(enabled));
+}
+
 // Worst-case heat of the wave currently charging, after the audit the
 // automation would run. Shared by the notch controller and the stats log.
 function projectedHeat(G, enabled) {
@@ -1369,7 +1526,15 @@ function shimmerKey(el) {
 // Runs at most one action per call, in OPS order. Returns a log line or null.
 function runOps(game, enabled) {
   const G = game.G;
-  if (G.ascending) return null;
+  // Between games only the sequel routine (shop, launch) has anything to do.
+  if (G.ascending) {
+    if (!enabled.sequel) return null;
+    try {
+      return ROUTINES.sequel(G, enabled, game);
+    } catch (e) {
+      return `sequel error: ${e.message}`;
+    }
+  }
   for (const { key } of OPS) {
     // Experiment flags share OPS but have no routine of their own.
     if (!enabled[key] || !ROUTINES[key]) continue;
@@ -1823,8 +1988,10 @@ const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
 // its copy of the game falls behind for good.
 const BUY_MARGIN = 1 + 1e-6;
 
+let reserve = 0; // bans held back for the next audit (auditReserve in src/ops.js)
+
 function canAfford(game, price) {
-  return game.G.s.bans >= price * BUY_MARGIN;
+  return game.G.s.bans - reserve >= price * BUY_MARGIN;
 }
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
@@ -1834,9 +2001,10 @@ const UTILITY_MAX_SECONDS = 600;
 let busy = false;
 
 // Returns the number of purchases made. Never overlaps itself.
-async function autoBuy(game, path, utilities = []) {
+async function autoBuy(game, path, utilities = [], ops = {}) {
   if (busy) return 0;
   busy = true;
+  reserve = auditReserve(game.G, ops);
   try {
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
@@ -2000,7 +2168,7 @@ async function start() {
       return;
     }
     const plannerMs = realNow() - t0;
-    if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities);
+    if (ui.settings.auto) autoBought += await autoBuy(game, out.result.path, out.utilities, ui.settings.ops);
     return plannerMs;
   }
 
@@ -2115,6 +2283,12 @@ function render(game, ui, autoBought) {
     html += `<h4>Arms race (auto: escalate x3; truce only near review bomb; no détente)</h4>`;
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
+
+  const seq = sequelStatus(game.G, settings.ops);
+  html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
+  html += `<div>+${fmtNum(seq.pending)} ⭐ pending · ×${seq.multNow.toFixed(2)} → ×${seq.multAfter.toFixed(2)}` +
+    `${seq.ship ? ' · <b>ship</b>' : ''}</div>`;
+  if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;

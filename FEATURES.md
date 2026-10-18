@@ -4,7 +4,7 @@ Every game feature, keyed by the game's own identifier, with how Glider handles 
 
 Status: ✅ automated · 🟡 partial · ➖ nothing to do / left to the user on purpose · ❓ not analyzed
 
-Last checked against: `index-B688DHuD.js`
+Last checked against: `index-DjdI4Fjz.js`
 
 ## Actions (input codes)
 
@@ -24,9 +24,9 @@ Last checked against: `index-B688DHuD.js`
 | `action:k` | Dupe response card | ✅ | Page, identify (answer from state), hotfix first, then the rest. |
 | `action:m` | Coin-Lock | ✅ | Only during duping/economy meta. |
 | `action:v` | Pull the Lever | ✅ | Whenever ready (cooldown-limited); with the Thermos at burnout 95 (80 during a boost); never during Kernel Panic. |
-| `action:a` | Ship a Sequel | ➖ | Prestige timing left to the user. |
-| `action:p` | Prestige upgrade | ➖ | Left to the user. |
-| `action:l` | Launch sequel | ➖ | Left to the user. |
+| `action:a` | Ship a Sequel | ✅ | Ship when production after the sequel (incl. shop buys) is ≥4× the current (`sequelPlan`); simulated best of ×2/×4 and a gain-per-hour rule. |
+| `action:p` | Prestige upgrade | ✅ | Review tiers first; other items only if they leave enough for the next tier or cost ≤1% of it. |
+| `action:l` | Launch sequel | ✅ | Right after the shop buys. |
 | `action:o` | Offline catch-up | ➖ | Game-internal on load. |
 | `action:n` | Studio name joke | ➖ | Achievement only. |
 | `action:z` | Attest nonce | ➖ | Leaderboard plumbing. |

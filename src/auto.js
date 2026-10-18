@@ -10,8 +10,10 @@ const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
 // its copy of the game falls behind for good.
 const BUY_MARGIN = 1 + 1e-6;
 
+let reserve = 0; // bans held back for the next audit (auditReserve in src/ops.js)
+
 function canAfford(game, price) {
-  return game.G.s.bans >= price * BUY_MARGIN;
+  return game.G.s.bans - reserve >= price * BUY_MARGIN;
 }
 // Utility upgrades (no production effect) are bought once they cost no more
 // than this many seconds of current income. Checked before the production
@@ -21,9 +23,10 @@ export const UTILITY_MAX_SECONDS = 600;
 let busy = false;
 
 // Returns the number of purchases made. Never overlaps itself.
-export async function autoBuy(game, path, utilities = []) {
+export async function autoBuy(game, path, utilities = [], ops = {}) {
   if (busy) return 0;
   busy = true;
+  reserve = auditReserve(game.G, ops);
   try {
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;

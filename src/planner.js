@@ -173,3 +173,91 @@ export function groupSteps(steps, keyOf) {
   }
   return out;
 }
+
+// Prestige ("Ship a Sequel"). Read from code (build B688DHuD): stars =
+// integer cbrt(bansAllTime / 1e12); shipping adds stars − level to both
+// level (kept) and reputation (spent here). Production ×(1 + level × 1% ×
+// share), where share sums the owned review tiers. The order matches the
+// game's crate order on the "Between Games" screen.
+export const PRESTIGE = [
+  { key: 'legacy', price: 1 },
+  { key: 'reputation1', price: 11, requires: 'legacy', share: 0.05 },
+  { key: 'reputation2', price: 1111, requires: 'reputation1', share: 0.2 },
+  { key: 'reputation3', price: 111111, requires: 'reputation2', share: 0.25 },
+  { key: 'reputation4', price: 11111111, requires: 'reputation3', share: 0.25 },
+  { key: 'reputation5', price: 1111111111, requires: 'reputation4', share: 0.25 },
+  { key: 'starterMacros', price: 50, requires: 'legacy' },
+  { key: 'starterMods', price: 150, requires: 'starterMacros' },
+  { key: 'offline1', price: 1, requires: 'legacy' },
+  { key: 'offline2', price: 100, requires: 'offline1' },
+  { key: 'offline3', price: 10000, requires: 'offline2' },
+  { key: 'luckyReports1', price: 77, requires: 'legacy' },
+  { key: 'luckyReports2', price: 777, requires: 'luckyReports1' },
+  { key: 'luckyReports3', price: 7777, requires: 'luckyReports2' },
+  { key: 'cheapUpgrades', price: 99, requires: 'legacy' },
+  { key: 'cheapBuildings', price: 99, requires: 'legacy' },
+];
+const PRESTIGE_BY_KEY = Object.fromEntries(PRESTIGE.map(p => [p.key, p]));
+// Purchase priority: the review tiers (the production bonus) first, then the
+// rest by value per star.
+const PRESTIGE_PRIORITY = ['legacy', 'reputation1', 'reputation2', 'reputation3', 'reputation4', 'reputation5',
+  'starterMacros', 'starterMods', 'cheapBuildings', 'cheapUpgrades', 'luckyReports1', 'luckyReports2',
+  'luckyReports3', 'offline1', 'offline2', 'offline3'];
+const TIERS = PRESTIGE.filter(p => p.share);
+// A non-tier item is bought only if it leaves enough reputation for the next
+// review tier, or costs at most this share of that tier's price.
+const RESERVE_FREE_SHARE = 0.01;
+// Ship once production after the sequel (incl. the shop buys) is at least
+// this many times the current one. Simulated from the user's late save
+// (2026-10-18, seeds 7-9): 3 h, never 26.15 / ×2 27.05 / ×4 27.17 log10
+// bans; 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19,
+// which shipped 5-6 small sequels because waves make gains bursty.
+export const SHIP_GAIN = 4;
+
+export function prestigeStars(bansAllTime) {
+  if (!(bansAllTime >= 1e12)) return 0;
+  const x = bansAllTime / 1e12;
+  let t = Math.floor(Math.cbrt(x));
+  while ((t + 1) ** 3 <= x) t++;
+  while (t ** 3 > x) t--;
+  return t;
+}
+
+export function prestigeShare(owned) {
+  return TIERS.reduce((sum, p) => sum + (owned.has(p.key) ? p.share : 0), 0);
+}
+
+// What to buy with `reputation`, in purchase order.
+export function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
+  const have = new Set(owned);
+  const buys = [];
+  let rep = reputation;
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const key of PRESTIGE_PRIORITY) {
+      const p = PRESTIGE_BY_KEY[key];
+      if (have.has(key) || (p.requires && !have.has(p.requires)) || p.price > rep) continue;
+      if (!p.share && !spendAll) {
+        const next = TIERS.find(t => !have.has(t.key));
+        if (next && p.price > next.price * RESERVE_FREE_SHARE && rep - p.price < next.price) continue;
+      }
+      have.add(key);
+      buys.push(key);
+      rep -= p.price;
+      progress = true;
+      break;
+    }
+  }
+  return buys;
+}
+
+// Should we ship now, and what would it buy? `owned` is a Set of keys.
+export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
+  const pending = Math.max(0, prestigeStars(bansAllTime) - level);
+  const multNow = 1 + level * 0.01 * prestigeShare(owned);
+  const buys = prestigeBuys(owned, reputation + pending, { spendAll });
+  const after = new Set([...owned, ...buys]);
+  const multAfter = 1 + (level + pending) * 0.01 * prestigeShare(after);
+  return { pending, buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
+}

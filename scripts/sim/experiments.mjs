@@ -9,10 +9,17 @@ import { renderProgress } from './progress.mjs';
 const minutes = Number(process.argv[2] ?? 120);
 const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
+const SAVE = ['--save', 'research/tmp/save-2026-10-18.txt'];
 const CONFIG_SETS = {
-  // Ban wave launch point: the multiplier steps up at 134%, 200%, 267%.
-  // What human-like play costs: Anti anti-cheat on (default) vs off. The
-  // simulator skips the pop-up hit-test (no layout), so this measures pacing.
+  // Sequels from the user's late save (42,573 pending stars). 3 h results
+  // (seeds 7-9): never ship 26.15, ship at ×2 27.05, ×4 27.17, ×2 spending all
+  // reputation 26.81. 6 h: ×4 29.41 vs a gain-per-hour rule 28.19 (removed).
+  // ×4 is the default; this set sweeps around it.
+  sequel: {
+    gain3: [...SAVE, '--set', 'ops.sequelGain=3'],
+    gain4: [...SAVE],
+    gain6: [...SAVE, '--set', 'ops.sequelGain=6'],
+  },
   stealth: {
     human: [],
     steady: ['--set', 'stealth=false'],
