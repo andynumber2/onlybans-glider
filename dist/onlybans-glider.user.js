@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.21.2
+// @version      0.21.3
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-DjdI4Fjz.js';
-const VERSION = '0.21.2';
+const VERSION = '0.21.3';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -1639,17 +1639,21 @@ async function createStats() {
     },
 
     // Called about once a second.
-    tick(G, projectedHeat) {
+    // Returns true when it took a minute snapshot (diag: loop health from main.js).
+    tick(G, projectedHeat, diag = null) {
       const s = G.s;
       const t = s.truth;
       const now = Date.now();
+      let snapped = false;
       if (now - lastSnapshot >= SNAPSHOT_MS) {
         lastSnapshot = now;
+        snapped = true;
         push(data.snapshots, {
           t: now, T: G.T, all: s.bansAllTime, verified: verifiedScore(),
           bps: G.bps, rawBps: G.rawBps, bans: s.bans,
           perception: s.perception, reality: s.reality, cred: t.cred,
           burnout: s.staff.burnout, notch: t.notch, meter: s.waveMeter, waves: s.wavesLaunched,
+          sequels: s.prestige.sequels, diag,
         }, MAX_SNAPSHOTS);
       }
       // A review exists from launch until the verdict lands. Launch resets the
@@ -1675,6 +1679,7 @@ async function createStats() {
         push(data.waves, pendingWave, MAX_WAVES);
         pendingWave = null;
       }
+      return snapped;
     },
 
     summary() {
@@ -2004,13 +2009,18 @@ function canAfford(game, price) {
 const UTILITY_MAX_SECONDS = 600;
 
 let busy = false;
+// Why the last cycle stopped buying, for the panel and the stats export.
+const buyerState = { stop: '' };
 
 // Returns the number of purchases made. Never overlaps itself.
 async function autoBuy(game, path, utilities = [], ops = {}) {
-  if (busy) return 0;
+  if (busy) {
+    buyerState.stop = 'previous cycle still running';
+    return 0;
+  }
   busy = true;
-  reserve = auditReserve(game.G, ops);
   try {
+    reserve = auditReserve(game.G, ops);
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
     const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
@@ -2024,6 +2034,8 @@ async function autoBuy(game, path, utilities = [], ops = {}) {
     }
     let clicks = 0;
     let bought = 0;
+    buyerState.stop = 'all planned buys done';
+    if (!queue.length) buyerState.stop = path.length ? `next buy in ${Math.round(path[0].at)}s` : 'nothing planned';
     while (queue.length && clicks < MAX_CLICKS_PER_CYCLE && !game.G.ascending) {
       const step = queue[0];
       let ok = false;
@@ -2032,7 +2044,10 @@ async function autoBuy(game, path, utilities = [], ops = {}) {
         const def = step.item.def;
         const run = queue.filter(s => s.item.type === 'building' && s.item.def === def).length;
         count = BULK_SIZES.find(n => n <= run && canAfford(game, game.logic.buildingPrice(def.id, n))) ?? 1;
-        if (!canAfford(game, game.logic.buildingPrice(def.id, count))) break;
+        if (!canAfford(game, game.logic.buildingPrice(def.id, count))) {
+          buyerState.stop = `can't afford ${def.name}${reserve > 0 ? ' (audit reserve)' : ''}`;
+          break;
+        }
         ok = clickBuilding(game, def, count);
         if (ok) {
           let left = count;
@@ -2044,13 +2059,17 @@ async function autoBuy(game, path, utilities = [], ops = {}) {
           }
         }
       } else {
-        if (!canAfford(game, step.price)) break;
+        if (!canAfford(game, step.price)) {
+          buyerState.stop = `can't afford ${step.item.def.name}${reserve > 0 ? ' (audit reserve)' : ''}`;
+          break;
+        }
         ok = clickUpgrade(game, step.item.def);
         if (ok) queue.shift();
       }
-      if (!ok) break;
+      if (!ok) break; // clickBuilding/clickUpgrade set buyerState.stop
       clicks++;
       bought += count;
+      if (clicks >= MAX_CLICKS_PER_CYCLE) buyerState.stop = 'click cap for this cycle';
       // Upgrade crates re-render after a purchase; the gap below covers it
       // (clickUpgrade refuses to click while the crates don't match).
       if (humanMode() || step.item.type === 'upgrade') await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
@@ -2102,11 +2121,19 @@ function armsRacePick(game) {
 }
 
 function clickBuilding(game, def, count = 1) {
-  if (!ensureBuyQuantity(count)) return false;
+  if (!ensureBuyQuantity(count)) {
+    buyerState.stop = `Buy ×${count} toggle not clickable`;
+    return false;
+  }
   const row = document.querySelectorAll('#buildings .product')[def.index];
-  if (!row || row.classList.contains('locked')) return false;
+  if (!row || row.classList.contains('locked')) {
+    buyerState.stop = `${def.name} row missing or locked`;
+    return false;
+  }
   reveal(row);
-  return click(row);
+  if (click(row)) return true;
+  buyerState.stop = `${def.name} row covered or off screen`;
+  return false;
 }
 
 // Crates are rendered for unlocked, unbought upgrades sorted by price. Rebuild
@@ -2118,9 +2145,14 @@ function clickUpgrade(game, def) {
     .sort((a, b) => logic.upgradePrice(a) - logic.upgradePrice(b));
   const crates = document.querySelectorAll('#upgrades .crate');
   const idx = expected.indexOf(def);
-  if (idx < 0 || crates.length !== expected.length) return false;
+  if (idx < 0 || crates.length !== expected.length) {
+    buyerState.stop = `upgrade crates don't match (${crates.length} shown, ${expected.length} expected)`;
+    return false;
+  }
   reveal(crates[idx]);
-  return click(crates[idx]);
+  if (click(crates[idx])) return true;
+  buyerState.stop = `${def.name} crate covered or off screen`;
+  return false;
 }
 
 // The building rows buy whatever the Buy/Sell + quantity toggles say.
@@ -2186,6 +2218,9 @@ async function start() {
   }
 
   let autoBought = 0;
+  // Longest real-time gap between replans since the last stats snapshot.
+  // Chrome throttles timers in hidden tabs to about once a minute.
+  const loopHealth = { last: 0, maxGapMs: 0, hiddenSeen: false };
 
   async function tick() {
     if (!game || game.G.ascending) return;
@@ -2209,6 +2244,10 @@ async function start() {
   // wait at least PLANNER_CPU_SHARE⁻¹ × its own run time between replans.
   // Only the planner's own compute counts, not the auto-buyer's click pauses.
   const replanLoop = async () => {
+    const now = realNow();
+    if (loopHealth.last) loopHealth.maxGapMs = Math.max(loopHealth.maxGapMs, now - loopHealth.last);
+    loopHealth.last = now;
+    if (document.hidden) loopHealth.hiddenSeen = true;
     const spent = (await tick()) ?? 0;
     setTimeout(replanLoop, Math.max(REPLAN_MS, spent / PLANNER_CPU_SHARE));
   };
@@ -2225,7 +2264,14 @@ async function start() {
   // Stats record whether or not AUTO is on, so manual play can be compared.
   setInterval(() => {
     if (!game) return;
-    stats.tick(game.G, projectedHeat(game.G, ui.settings.ops));
+    const diag = {
+      hidden: document.hidden || loopHealth.hiddenSeen, maxReplanGapS: Math.round(loopHealth.maxGapMs / 1000),
+      buyer: buyerState.stop,
+    };
+    if (stats.tick(game.G, projectedHeat(game.G, ui.settings.ops), diag)) {
+      loopHealth.maxGapMs = 0;
+      loopHealth.hiddenSeen = false;
+    }
     ui.renderStats(statsHtml(stats.summary()));
   }, STATS_MS);
 }
@@ -2324,7 +2370,7 @@ function render(game, ui, autoBought) {
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
-  if (settings.auto) status += `<div>Auto: ${autoBought} bought this session</div>`;
+  if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
   if (game.build !== ANALYZED_BUILD) {
     html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;

@@ -102,6 +102,7 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 
 ## Open items
 
+- Live buying stalls (2026-10-18, user on VDI): the bank piles up, then catches up while the user watches. Hypothesis (inferred): Chrome throttles timers in hidden/occluded tabs to ~1/min. v0.21.3 records it: panel status shows the buyer's stop reason; each minute snapshot in the Stats export has `diag` {hidden, maxReplanGapS, buyer}. Check an export before changing anything.
 - Panel settings are saved as a full snapshot on any change, so new defaults never reach an existing install (the user's panel kept 15m/depth 3). User declined a fix (2026-10-15); set new defaults by hand.
 - Real-play confirmation (v0.15.0, 2026-10-15): audit-before-launch works (from wave 26 on, 42 of 51 waves CLEAN vs 4 of 12 tier-2 before); notch projected heat runs about 0.75 to 0.85× high (cautious).
 - ➖ rows in `FEATURES.md` were audited on 2026-10-15: none has a player input that is not already automated (incl. The Hammer incident, Throwback week, golden outcomes; TDASH's drifting fraud case is clicked by the Legends routine).

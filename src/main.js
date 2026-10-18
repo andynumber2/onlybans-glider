@@ -44,6 +44,9 @@ async function start() {
   }
 
   let autoBought = 0;
+  // Longest real-time gap between replans since the last stats snapshot.
+  // Chrome throttles timers in hidden tabs to about once a minute.
+  const loopHealth = { last: 0, maxGapMs: 0, hiddenSeen: false };
 
   async function tick() {
     if (!game || game.G.ascending) return;
@@ -67,6 +70,10 @@ async function start() {
   // wait at least PLANNER_CPU_SHARE⁻¹ × its own run time between replans.
   // Only the planner's own compute counts, not the auto-buyer's click pauses.
   const replanLoop = async () => {
+    const now = realNow();
+    if (loopHealth.last) loopHealth.maxGapMs = Math.max(loopHealth.maxGapMs, now - loopHealth.last);
+    loopHealth.last = now;
+    if (document.hidden) loopHealth.hiddenSeen = true;
     const spent = (await tick()) ?? 0;
     setTimeout(replanLoop, Math.max(REPLAN_MS, spent / PLANNER_CPU_SHARE));
   };
@@ -83,7 +90,14 @@ async function start() {
   // Stats record whether or not AUTO is on, so manual play can be compared.
   setInterval(() => {
     if (!game) return;
-    stats.tick(game.G, projectedHeat(game.G, ui.settings.ops));
+    const diag = {
+      hidden: document.hidden || loopHealth.hiddenSeen, maxReplanGapS: Math.round(loopHealth.maxGapMs / 1000),
+      buyer: buyerState.stop,
+    };
+    if (stats.tick(game.G, projectedHeat(game.G, ui.settings.ops), diag)) {
+      loopHealth.maxGapMs = 0;
+      loopHealth.hiddenSeen = false;
+    }
     ui.renderStats(statsHtml(stats.summary()));
   }, STATS_MS);
 }
@@ -182,7 +196,7 @@ function render(game, ui, autoBought) {
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
-  if (settings.auto) status += `<div>Auto: ${autoBought} bought this session</div>`;
+  if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
   if (game.build !== ANALYZED_BUILD) {
     html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;

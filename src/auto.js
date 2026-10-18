@@ -26,13 +26,18 @@ function canAfford(game, price) {
 export const UTILITY_MAX_SECONDS = 600;
 
 let busy = false;
+// Why the last cycle stopped buying, for the panel and the stats export.
+export const buyerState = { stop: '' };
 
 // Returns the number of purchases made. Never overlaps itself.
 export async function autoBuy(game, path, utilities = [], ops = {}) {
-  if (busy) return 0;
+  if (busy) {
+    buyerState.stop = 'previous cycle still running';
+    return 0;
+  }
   busy = true;
-  reserve = auditReserve(game.G, ops);
   try {
+    reserve = auditReserve(game.G, ops);
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
     const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
@@ -46,6 +51,8 @@ export async function autoBuy(game, path, utilities = [], ops = {}) {
     }
     let clicks = 0;
     let bought = 0;
+    buyerState.stop = 'all planned buys done';
+    if (!queue.length) buyerState.stop = path.length ? `next buy in ${Math.round(path[0].at)}s` : 'nothing planned';
     while (queue.length && clicks < MAX_CLICKS_PER_CYCLE && !game.G.ascending) {
       const step = queue[0];
       let ok = false;
@@ -54,7 +61,10 @@ export async function autoBuy(game, path, utilities = [], ops = {}) {
         const def = step.item.def;
         const run = queue.filter(s => s.item.type === 'building' && s.item.def === def).length;
         count = BULK_SIZES.find(n => n <= run && canAfford(game, game.logic.buildingPrice(def.id, n))) ?? 1;
-        if (!canAfford(game, game.logic.buildingPrice(def.id, count))) break;
+        if (!canAfford(game, game.logic.buildingPrice(def.id, count))) {
+          buyerState.stop = `can't afford ${def.name}${reserve > 0 ? ' (audit reserve)' : ''}`;
+          break;
+        }
         ok = clickBuilding(game, def, count);
         if (ok) {
           let left = count;
@@ -66,13 +76,17 @@ export async function autoBuy(game, path, utilities = [], ops = {}) {
           }
         }
       } else {
-        if (!canAfford(game, step.price)) break;
+        if (!canAfford(game, step.price)) {
+          buyerState.stop = `can't afford ${step.item.def.name}${reserve > 0 ? ' (audit reserve)' : ''}`;
+          break;
+        }
         ok = clickUpgrade(game, step.item.def);
         if (ok) queue.shift();
       }
-      if (!ok) break;
+      if (!ok) break; // clickBuilding/clickUpgrade set buyerState.stop
       clicks++;
       bought += count;
+      if (clicks >= MAX_CLICKS_PER_CYCLE) buyerState.stop = 'click cap for this cycle';
       // Upgrade crates re-render after a purchase; the gap below covers it
       // (clickUpgrade refuses to click while the crates don't match).
       if (humanMode() || step.item.type === 'upgrade') await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
@@ -124,11 +138,19 @@ export function armsRacePick(game) {
 }
 
 function clickBuilding(game, def, count = 1) {
-  if (!ensureBuyQuantity(count)) return false;
+  if (!ensureBuyQuantity(count)) {
+    buyerState.stop = `Buy ×${count} toggle not clickable`;
+    return false;
+  }
   const row = document.querySelectorAll('#buildings .product')[def.index];
-  if (!row || row.classList.contains('locked')) return false;
+  if (!row || row.classList.contains('locked')) {
+    buyerState.stop = `${def.name} row missing or locked`;
+    return false;
+  }
   reveal(row);
-  return click(row);
+  if (click(row)) return true;
+  buyerState.stop = `${def.name} row covered or off screen`;
+  return false;
 }
 
 // Crates are rendered for unlocked, unbought upgrades sorted by price. Rebuild
@@ -140,9 +162,14 @@ function clickUpgrade(game, def) {
     .sort((a, b) => logic.upgradePrice(a) - logic.upgradePrice(b));
   const crates = document.querySelectorAll('#upgrades .crate');
   const idx = expected.indexOf(def);
-  if (idx < 0 || crates.length !== expected.length) return false;
+  if (idx < 0 || crates.length !== expected.length) {
+    buyerState.stop = `upgrade crates don't match (${crates.length} shown, ${expected.length} expected)`;
+    return false;
+  }
   reveal(crates[idx]);
-  return click(crates[idx]);
+  if (click(crates[idx])) return true;
+  buyerState.stop = `${def.name} crate covered or off screen`;
+  return false;
 }
 
 // The building rows buy whatever the Buy/Sell + quantity toggles say.

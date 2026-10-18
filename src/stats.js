@@ -88,17 +88,21 @@ export async function createStats() {
     },
 
     // Called about once a second.
-    tick(G, projectedHeat) {
+    // Returns true when it took a minute snapshot (diag: loop health from main.js).
+    tick(G, projectedHeat, diag = null) {
       const s = G.s;
       const t = s.truth;
       const now = Date.now();
+      let snapped = false;
       if (now - lastSnapshot >= SNAPSHOT_MS) {
         lastSnapshot = now;
+        snapped = true;
         push(data.snapshots, {
           t: now, T: G.T, all: s.bansAllTime, verified: verifiedScore(),
           bps: G.bps, rawBps: G.rawBps, bans: s.bans,
           perception: s.perception, reality: s.reality, cred: t.cred,
           burnout: s.staff.burnout, notch: t.notch, meter: s.waveMeter, waves: s.wavesLaunched,
+          sequels: s.prestige.sequels, diag,
         }, MAX_SNAPSHOTS);
       }
       // A review exists from launch until the verdict lands. Launch resets the
@@ -124,6 +128,7 @@ export async function createStats() {
         push(data.waves, pendingWave, MAX_WAVES);
         pendingWave = null;
       }
+      return snapped;
     },
 
     summary() {
