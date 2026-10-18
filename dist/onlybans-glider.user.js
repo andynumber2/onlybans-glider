@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.21.1
+// @version      0.21.2
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-DjdI4Fjz.js';
-const VERSION = '0.21.1';
+const VERSION = '0.21.2';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -1981,6 +1981,11 @@ function esc(s) {
 // purchase goes through the game's input recorder like any other input.
 
 const MAX_CLICKS_PER_CYCLE = 15;
+// The store's own quantity toggles. A run of identical planned buildings is
+// bought with one click at the largest size it fills (one recorded action,
+// all or nothing, like a person clicking x10). Without this, buying one item
+// per click fell far behind income after a sequel (bank at ~19 min of income).
+const BULK_SIZES = [100, 10];
 const CLICK_GAP_MS = [120, 260]; // human mode only (src/input.js)
 // Buy only once the bank clears the price by this factor. The leaderboard
 // server replays our inputs and may compute bans a hair differently (another
@@ -2010,20 +2015,47 @@ async function autoBuy(game, path, utilities = [], ops = {}) {
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
     const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
     if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
-    let clicks = 0;
+    // The buy-now prefix is bought this cycle in any order, so identical
+    // buildings in it are grouped into bulk clicks.
+    const queue = [];
     for (const step of path) {
-      if (step.at > 0 || clicks >= MAX_CLICKS_PER_CYCLE || game.G.ascending) break;
-      if (!canAfford(game, step.price)) break;
+      if (step.at > 0) break;
+      queue.push(step);
+    }
+    let clicks = 0;
+    let bought = 0;
+    while (queue.length && clicks < MAX_CLICKS_PER_CYCLE && !game.G.ascending) {
+      const step = queue[0];
       let ok = false;
-      if (step.item.type === 'building') ok = clickBuilding(game, step.item.def);
-      else ok = clickUpgrade(game, step.item.def);
+      let count = 1;
+      if (step.item.type === 'building') {
+        const def = step.item.def;
+        const run = queue.filter(s => s.item.type === 'building' && s.item.def === def).length;
+        count = BULK_SIZES.find(n => n <= run && canAfford(game, game.logic.buildingPrice(def.id, n))) ?? 1;
+        if (!canAfford(game, game.logic.buildingPrice(def.id, count))) break;
+        ok = clickBuilding(game, def, count);
+        if (ok) {
+          let left = count;
+          for (let j = 0; j < queue.length && left > 0;) {
+            if (queue[j].item.type === 'building' && queue[j].item.def === def) {
+              queue.splice(j, 1);
+              left--;
+            } else j++;
+          }
+        }
+      } else {
+        if (!canAfford(game, step.price)) break;
+        ok = clickUpgrade(game, step.item.def);
+        if (ok) queue.shift();
+      }
       if (!ok) break;
       clicks++;
-      // The upgrade crates re-render after a purchase; wait for the next cycle.
-      if (step.item.type === 'upgrade') break;
-      if (humanMode()) await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
+      bought += count;
+      // Upgrade crates re-render after a purchase; the gap below covers it
+      // (clickUpgrade refuses to click while the crates don't match).
+      if (humanMode() || step.item.type === 'upgrade') await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
     }
-    return clicks;
+    return bought;
   } finally {
     busy = false;
   }
@@ -2069,8 +2101,8 @@ function armsRacePick(game) {
   return null;
 }
 
-function clickBuilding(game, def) {
-  if (!ensureBuyOne()) return false;
+function clickBuilding(game, def, count = 1) {
+  if (!ensureBuyQuantity(count)) return false;
   const row = document.querySelectorAll('#buildings .product')[def.index];
   if (!row || row.classList.contains('locked')) return false;
   reveal(row);
@@ -2092,15 +2124,15 @@ function clickUpgrade(game, def) {
 }
 
 // The building rows buy whatever the Buy/Sell + quantity toggles say.
-// Force Buy x1 so each click is exactly one planned purchase.
-function ensureBuyOne() {
-  for (const label of ['Buy', '1']) {
+// Set Buy x`count` so each click is exactly the planned purchase.
+function ensureBuyQuantity(count) {
+  for (const label of ['Buy', String(count)]) {
     const btn = [...document.querySelectorAll('#buyControls button')].find(b => b.textContent.trim() === label);
     if (!btn) return false;
     if (!btn.classList.contains('on') && !click(btn)) return false;
   }
   const on = [...document.querySelectorAll('#buyControls button.on')].map(b => b.textContent.trim());
-  return on.includes('Buy') && on.includes('1');
+  return on.includes('Buy') && on.includes(String(count));
 }
 
 function sleep(ms) {

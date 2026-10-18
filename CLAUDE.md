@@ -14,7 +14,7 @@ Public launch (2026-10-16): the game is now a public build. Starting with build 
 - `src/input.js`: every click goes through here. "Anti anti-cheat" (`settings.stealth`, default on) only clicks the topmost element at the click point (game pop-ups block it, our panel is ignored), scrolls store rows into view, and turns on human pacing (reaction delays, hammer bursts, purchase gaps). Off: no hit-test, no delays, steady 14/s hammer.
   Cost measured (2026-10-15, `stealth` set, seeds 7-9, 2 h fresh run): human 21.86 vs steady 23.21 log10 bans, about 22× more bans with it off, every seed; clicks 38.5k vs 94.5k. The simulator skips the pop-up hit-test, so this is pacing only. User decision: keep human mode as the default (4/s average is human).
 - `src/ops.js`: all non-purchase automation (`OPS` list = toggles + priority order, `ROUTINES`), humanized boost-aware hammer clicker (`startHammer`, `clickBoost`, `productionBoost`).
-- `src/auto.js`: auto-buyer (clicks store rows / upgrade crates), arms race picks, utility upgrades.
+- `src/auto.js`: auto-buyer (clicks store rows / upgrade crates), arms race picks, utility upgrades. Identical buildings in the buy-now prefix go through the store's ×100/×10 toggles in one click; buying one per click fell far behind income after a sequel (20 min post-sequel sim: production 1.9e15 → 7.7e20/s with bulk).
 - `src/stats.js`: telemetry in IndexedDB (wave verdicts with pre-launch conditions, minute snapshots, action counts). Copy JSON button exports it.
 - `src/overlay.js`: panel UI, settings (localStorage key `onlybans-glider-settings`), edge-anchored positioning.
 - `src/main.js`: wiring and timers (replan ≥2 s on a 5% CPU budget, ops 400 ms, stats 1 s).
