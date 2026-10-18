@@ -19,9 +19,12 @@ export function humanMode() {
 }
 
 // The simulator runs the game in jsdom, which has no layout; it sets
-// window.__noLayout so clicks skip the hit-test there.
+// window.__noLayout so clicks skip the hit-test there. A hidden tab skips it
+// too: live, with the VDI window hidden, every hit-test failed for 5.7 h
+// (likely nothing is drawn, so every point reads as empty), and no pop-up can be in the
+// way of a click nobody is watching. Pacing stays human.
 function canHitTest() {
-  return !window.__noLayout && typeof document.elementsFromPoint === 'function';
+  return !window.__noLayout && !document.hidden && typeof document.elementsFromPoint === 'function';
 }
 
 // The topmost element at a viewport point, ignoring this script's own panel

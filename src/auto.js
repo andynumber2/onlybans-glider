@@ -2,6 +2,10 @@
 // store elements. Each click runs the same handler a human click does, so the
 // purchase goes through the game's input recorder like any other input.
 
+// Replanning after 15 clicks beats working through the whole buy-now list:
+// income grows fast after a sequel, and a stale list buys the wrong things.
+// 30 min post-sequel sim, seeds 2/7/8/9: cap 100 earned 5-750x fewer bans
+// than cap 15 on every seed (2026-10-18).
 const MAX_CLICKS_PER_CYCLE = 15;
 // The store's own quantity toggles. A run of identical planned buildings is
 // bought with one click at the largest size it fills (one recorded action,
@@ -86,7 +90,7 @@ export async function autoBuy(game, path, utilities = [], ops = {}) {
       if (!ok) break; // clickBuilding/clickUpgrade set buyerState.stop
       clicks++;
       bought += count;
-      if (clicks >= MAX_CLICKS_PER_CYCLE) buyerState.stop = 'click cap for this cycle';
+      if (clicks >= MAX_CLICKS_PER_CYCLE) buyerState.stop = `${MAX_CLICKS_PER_CYCLE} buys done, replanning`;
       // Upgrade crates re-render after a purchase; the gap below covers it
       // (clickUpgrade refuses to click while the crates don't match).
       if (humanMode() || step.item.type === 'upgrade') await sleep(CLICK_GAP_MS[0] + Math.random() * (CLICK_GAP_MS[1] - CLICK_GAP_MS[0]));
