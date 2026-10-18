@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.21.3
+// @version      0.21.4
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-DjdI4Fjz.js';
-const VERSION = '0.21.3';
+const VERSION = '0.21.4';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -2161,7 +2161,10 @@ function ensureBuyQuantity(count) {
   for (const label of ['Buy', String(count)]) {
     const btn = [...document.querySelectorAll('#buyControls button')].find(b => b.textContent.trim() === label);
     if (!btn) return false;
-    if (!btn.classList.contains('on') && !click(btn)) return false;
+    if (btn.classList.contains('on')) continue;
+    // The toggles sit at the top of the scrolling store, often out of view.
+    reveal(btn);
+    if (!click(btn)) return false;
   }
   const on = [...document.querySelectorAll('#buyControls button.on')].map(b => b.textContent.trim());
   return on.includes('Buy') && on.includes(String(count));

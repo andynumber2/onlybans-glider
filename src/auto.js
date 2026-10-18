@@ -178,7 +178,10 @@ function ensureBuyQuantity(count) {
   for (const label of ['Buy', String(count)]) {
     const btn = [...document.querySelectorAll('#buyControls button')].find(b => b.textContent.trim() === label);
     if (!btn) return false;
-    if (!btn.classList.contains('on') && !click(btn)) return false;
+    if (btn.classList.contains('on')) continue;
+    // The toggles sit at the top of the scrolling store, often out of view.
+    reveal(btn);
+    if (!click(btn)) return false;
   }
   const on = [...document.querySelectorAll('#buyControls button.on')].map(b => b.textContent.trim());
   return on.includes('Buy') && on.includes(String(count));
