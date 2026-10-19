@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.21.8
+// @version      0.21.9
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-DKMHaj0D.js';
-const VERSION = '0.21.8';
+const VERSION = '0.21.9';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -307,6 +307,30 @@ function shipTarget(level, reputation, owned, pending, gain, spendAll) {
   let bans = stars ** 3 * 1e12;
   while (prestigeStars(bans) < stars) bans *= 1 + 1e-15;
   return { pending: hi, bansAllTime: bans };
+}
+
+// Milliseconds until all-time bans reach `targetBans`, extrapolating the
+// least-squares trend of log10(all-time bans) over the recent snapshots
+// ({t, all, sequels}) of the current sequel. Usually early: growth in log
+// space slows as a run matures. null: too few points; Infinity: no growth.
+function trendEta(snaps, targetBans, now, { windowMs = 30 * 60e3, minPoints = 10 } = {}) {
+  const last = snaps[snaps.length - 1];
+  if (!last) return null;
+  const pts = snaps.filter(x => x.t >= now - windowMs && x.sequels === last.sequels && x.all > 0);
+  if (pts.length < minPoints) return null;
+  const n = pts.length;
+  const mt = pts.reduce((a, x) => a + x.t, 0) / n;
+  const my = pts.reduce((a, x) => a + Math.log10(x.all), 0) / n;
+  let sty = 0;
+  let stt = 0;
+  for (const x of pts) {
+    sty += (x.t - mt) * (Math.log10(x.all) - my);
+    stt += (x.t - mt) ** 2;
+  }
+  const slope = sty / stt;
+  if (!(slope > 0)) return Infinity;
+  const left = Math.log10(targetBans) - Math.log10(last.all);
+  return Math.max(0, left / slope - (now - last.t));
 }
 
 // ---- src/game.js ----
@@ -710,7 +734,7 @@ const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
   { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
-  { key: 'sequel', label: 'Ship sequels (when production would at least double) and buy the Reputation shop' },
+  { key: 'sequel', label: 'Ship sequels (when production would at least ×4) and buy the Reputation shop' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -1723,6 +1747,11 @@ async function createStats() {
       return { waves: data.waves.length, counts, avgBps, lastWave: data.waves[data.waves.length - 1] };
     },
 
+    // Minute snapshots, oldest first (read only).
+    snapshots() {
+      return data.snapshots;
+    },
+
     exportJson() {
       return JSON.stringify(data);
     },
@@ -2267,7 +2296,7 @@ async function start() {
     let out;
     const t0 = realNow();
     try {
-      out = render(game, ui, autoBought);
+      out = render(game, ui, autoBought, stats);
     } catch (e) {
       ui.render(`<div class="err">Planner error: ${esc(e.stack ?? e.message)}</div>`);
       return;
@@ -2327,7 +2356,7 @@ function statsHtml(sum) {
   return html;
 }
 
-function render(game, ui, autoBought) {
+function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
   const t0 = realNow();
@@ -2404,9 +2433,18 @@ function render(game, ui, autoBought) {
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
-    const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+    // Nothing planned: production stays flat, so bans grow linearly at the
+    // current rate. Otherwise project the recent growth trend.
     let eta = '';
-    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)}`;
+    if (!result.path.length) {
+      const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+      if (result.rate > 0) eta = ` · idle, ~${fmtTime(left / result.rate)}`;
+    } else {
+      const etaMs = trendEta(stats.snapshots(), seq.target.bansAllTime, Date.now());
+      if (etaMs === null) eta = ' · ETA measuring';
+      else if (etaMs === Infinity) eta = ' · ETA: no growth';
+      else eta = ` · <span title="Projected from the last 30 min of all-time bans growth; usually early as growth slows">~${fmtTime(etaMs / 1000)}</span>`;
+    }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
   }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;

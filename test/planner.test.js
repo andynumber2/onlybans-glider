@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { plan, groupSteps, waitFor } from '../src/planner.js';
+import { plan, groupSteps, waitFor, trendEta } from '../src/planner.js';
 
 // Minimal Cookie Clicker style economy: price grows 15% per owned unit.
 function mockSim(defs, { upgrades = [] } = {}) {
@@ -186,4 +186,17 @@ test('groupSteps collapses consecutive identical buys', () => {
   assert.equal(g[0].count, 2);
   assert.equal(g[0].price, 3);
   assert.equal(g[0].at, 3);
+});
+
+test('trendEta extrapolates log growth of the current sequel', () => {
+  const min = 60000;
+  // 10x per 10 minutes, 20 points; an older sequel's points are ignored.
+  const snaps = [{ t: 0, all: 1e40, sequels: 6 }];
+  for (let i = 0; i < 20; i++) snaps.push({ t: (100 + i) * min, all: 1e30 * 10 ** (i / 10), sequels: 7 });
+  const now = 119 * min;
+  // Last point is 1e31.9; 1e33 is 1.1 decades away, i.e. 11 minutes.
+  assert.ok(Math.abs(trendEta(snaps, 1e33, now) - 11 * min) < 1);
+  assert.equal(trendEta(snaps.slice(0, 6), 1e33, 104 * min), null);
+  const flat = snaps.map(x => ({ ...x, all: 1e30 }));
+  assert.equal(trendEta(flat, 1e33, now), Infinity);
 });

@@ -291,3 +291,27 @@ function shipTarget(level, reputation, owned, pending, gain, spendAll) {
   while (prestigeStars(bans) < stars) bans *= 1 + 1e-15;
   return { pending: hi, bansAllTime: bans };
 }
+
+// Milliseconds until all-time bans reach `targetBans`, extrapolating the
+// least-squares trend of log10(all-time bans) over the recent snapshots
+// ({t, all, sequels}) of the current sequel. Usually early: growth in log
+// space slows as a run matures. null: too few points; Infinity: no growth.
+export function trendEta(snaps, targetBans, now, { windowMs = 30 * 60e3, minPoints = 10 } = {}) {
+  const last = snaps[snaps.length - 1];
+  if (!last) return null;
+  const pts = snaps.filter(x => x.t >= now - windowMs && x.sequels === last.sequels && x.all > 0);
+  if (pts.length < minPoints) return null;
+  const n = pts.length;
+  const mt = pts.reduce((a, x) => a + x.t, 0) / n;
+  const my = pts.reduce((a, x) => a + Math.log10(x.all), 0) / n;
+  let sty = 0;
+  let stt = 0;
+  for (const x of pts) {
+    sty += (x.t - mt) * (Math.log10(x.all) - my);
+    stt += (x.t - mt) ** 2;
+  }
+  const slope = sty / stt;
+  if (!(slope > 0)) return Infinity;
+  const left = Math.log10(targetBans) - Math.log10(last.all);
+  return Math.max(0, left / slope - (now - last.t));
+}

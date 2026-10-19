@@ -55,7 +55,7 @@ async function start() {
     let out;
     const t0 = realNow();
     try {
-      out = render(game, ui, autoBought);
+      out = render(game, ui, autoBought, stats);
     } catch (e) {
       ui.render(`<div class="err">Planner error: ${esc(e.stack ?? e.message)}</div>`);
       return;
@@ -115,7 +115,7 @@ function statsHtml(sum) {
   return html;
 }
 
-function render(game, ui, autoBought) {
+function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
   const t0 = realNow();
@@ -192,9 +192,18 @@ function render(game, ui, autoBought) {
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
-    const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+    // Nothing planned: production stays flat, so bans grow linearly at the
+    // current rate. Otherwise project the recent growth trend.
     let eta = '';
-    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)}`;
+    if (!result.path.length) {
+      const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+      if (result.rate > 0) eta = ` · idle, ~${fmtTime(left / result.rate)}`;
+    } else {
+      const etaMs = trendEta(stats.snapshots(), seq.target.bansAllTime, Date.now());
+      if (etaMs === null) eta = ' · ETA measuring';
+      else if (etaMs === Infinity) eta = ' · ETA: no growth';
+      else eta = ` · <span title="Projected from the last 30 min of all-time bans growth; usually early as growth slows">~${fmtTime(etaMs / 1000)}</span>`;
+    }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
   }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;

@@ -7,7 +7,7 @@ export const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
   { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
-  { key: 'sequel', label: 'Ship sequels (when production would at least double) and buy the Reputation shop' },
+  { key: 'sequel', label: 'Ship sequels (when production would at least ×4) and buy the Reputation shop' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },

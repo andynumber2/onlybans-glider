@@ -139,6 +139,11 @@ export async function createStats() {
       return { waves: data.waves.length, counts, avgBps, lastWave: data.waves[data.waves.length - 1] };
     },
 
+    // Minute snapshots, oldest first (read only).
+    snapshots() {
+      return data.snapshots;
+    },
+
     exportJson() {
       return JSON.stringify(data);
     },

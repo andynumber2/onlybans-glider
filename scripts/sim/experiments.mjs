@@ -9,16 +9,18 @@ import { renderProgress } from './progress.mjs';
 const minutes = Number(process.argv[2] ?? 120);
 const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
-const SAVE = ['--save', 'research/tmp/save-2026-10-18.txt'];
+const SAVE = ['--save', 'research/tmp/save-2026-10-19.txt'];
 const CONFIG_SETS = {
   // Sequels from the user's late save (42,573 pending stars). 3 h results
   // (seeds 7-9): never ship 26.15, ship at ×2 27.05, ×4 27.17, ×2 spending all
   // reputation 26.81. 6 h: ×4 29.41 vs a gain-per-hour rule 28.19 (removed).
-  // ×4 is the default; this set sweeps around it.
+  // ×4 is the default; this set sweeps around it. From the 2026-10-19 save
+  // (sequel 7), 6 h: ×2 36.67 / ×3 36.81 / ×4 36.77, inconclusive (only one
+  // ×2 run shipped). Next: 24 h, see the queue in CLAUDE.md.
   sequel: {
+    gain2: [...SAVE, '--set', 'ops.sequelGain=2'],
     gain3: [...SAVE, '--set', 'ops.sequelGain=3'],
     gain4: [...SAVE],
-    gain6: [...SAVE, '--set', 'ops.sequelGain=6'],
   },
   stealth: {
     human: [],

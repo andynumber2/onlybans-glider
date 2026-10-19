@@ -96,11 +96,13 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 - Anti anti-cheat on vs off: ~22× fewer bans with human pacing (every seed). User keeps it on.
 - Sequels (from the user's 2026-10-18 save, seeds 7-9): 3 h, never 26.15 / ship at ×2 27.05 / ×4 27.17 / ×2 spending all reputation 26.81 (log10 bans); 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19, which shipped 5-6 small sequels because waves make gains bursty. Shipped ×4, saving reputation for the next review tier (v0.21.0). `experiments.mjs ... sequel` sweeps ×3/×4/×6.
 
+- Sequel ratio at sequel 7 (2026-10-19 save, 6 h, seeds 7-9): ×2 36.67 / ×3 36.81 / ×4 36.77 log10 bans, inconclusive: only one ×2 run shipped (×2 needs 8× all-time, ×4 64×), so ×3 and ×4 ran the same policy and their gap is noise. Needs the 24 h sweep (queue).
 - Idle bank (2026-10-19, 6 h from the 2026-10-18 save, seeds 7-13): live export showed "nothing planned" for 26-33 min late in sequels while the bank reached 8-15 h of income (wiped at the sequel). Spending the bank on best-payback buildings when no step is planned: mean 33.37 vs hold 33.32 log10 bans, 4 wins / 2 losses / 1 tie. No consistent winner; not shipped (code reverted).
 
 ## Next up (queue)
 
-1. Sequel follow-ups: watch the user's first automated sequels. Late-game sims start from a save: `node scripts/sim/run.mjs --save research/tmp/save-2026-10-18.txt` (7.72e25 all-time, 0 sequels, gitignored; copy a fresh one in the browser console with `copy(localStorage.getItem('click2ban-save'))`, plain JSON).
+1. Research a sequel ship rule that scales (user request 2026-10-19), before the 24 h sweep in item 2. The fixed ×4 rule needs about 64× the previous ship point's all-time bans (stars grow with the cube root), so waits grow every sequel; from the 2026-10-19 save a 6 h sim shipped in 1 of 9 runs. Explore a formula or sliding scale, e.g. a ratio that falls with prestige level, or a rule on projected time to the target. Note: a gain-per-hour rule already lost (shipped too often because waves make gains bursty), so any marginal rule needs smoothing.
+2. 24 h sequel sweep (after item 1). From `research/tmp/save-2026-10-19.txt` (level 90.46M, 7 sequels, 7.40e35 all-time; gitignored, copy a fresh one in the browser console with `copy(localStorage.getItem('click2ban-save'))`, plain JSON), seeds 7-9, 1440 game-minutes: ×4 (current) vs ×2 vs the best candidate from item 1, as configs in the `sequel` set of `scripts/sim/experiments.mjs`. Cost: measured ~28 min wall per 6 h run, so ~2 h wall for 9 parallel runs. Steps: 5-minute sanity run per new config (check `actions`), then `npm run experiments -- 1440 7,8,9 sequel`. Record per run: score, sequels shipped and the game time of each ship (from the run log). Adopt a rule only if it beats ×4 on at least 2 of 3 seeds by more than noise (identical policies differed by up to 0.3 log10 per seed in the 6 h sweep).
 
 ## Open items
 
