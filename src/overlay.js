@@ -52,8 +52,7 @@ const CSS = `
 #obh th { color: #8592b3; font-weight: 400; border-bottom: 1px solid #39425f; }
 #obh h4 { margin: 8px 0 2px; color: #f5c542; font-size: 12px; }
 #obh .err { color: #ff6b6b; white-space: pre-wrap; }
-#obh details.ops { margin-bottom: 6px; border: 1px solid #39425f; padding: 2px 6px; }
-#obh details.stats { margin: 10px 0 0; }
+#obh details.ops { margin: 10px 0 0; border: 1px solid #39425f; padding: 2px 6px; }
 #obh details.ops summary { cursor: pointer; color: #f5c542; }
 #obh details.ops label { display: block; }
 #obh details.ops label.stealth { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #2a3150; }
@@ -81,15 +80,14 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
       <div class="controls">
         <label>Horizon <select data-set="horizon">${HORIZONS.map(([l, v]) =>
           `<option value="${v}">${l}</option>`).join('')}</select></label>
-        <label>Clicks/s <input data-set="clicksPerSec" type="number" min="0" max="20" step="1"></label>
         <label>Depth <input data-set="depth" type="number" min="1" max="5" step="1"></label>
       </div>
+      <div class="content muted">Binding to game…</div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
         <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
-      <div class="content muted">Binding to game…</div>
       <details class="ops stats"><summary>Stats</summary>
         <div class="statsLive muted"></div>
         <div class="statsBody muted">Collecting…</div>

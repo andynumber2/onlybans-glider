@@ -184,19 +184,18 @@ function render(game, ui, autoBought) {
 
   const special = specialUpgrades(game);
   if (special.length) {
-    html += `<h4>Arms race (auto: escalate x3; truce only near review bomb; no détente)</h4>`;
+    html += `<h4 title="Escalates all three, skips Détente, and calls a truce only when perception reaches 80 (near a review bomb)">Arms race (auto: escalate ×3)</h4>`;
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
   const seq = sequelStatus(game.G, settings.ops);
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
-  html += `<div>+${fmtNum(seq.pending)} ⭐ pending · ×${seq.multNow.toFixed(2)} → ×${seq.multAfter.toFixed(2)}` +
-    `${seq.ship ? ' · <b>ship</b>' : ''}</div>`;
+  if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
     const left = seq.target.bansAllTime - game.G.s.bansAllTime;
     let eta = '';
-    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)} at current rate`;
-    html += `<div>Ships at +${fmtNum(seq.target.pending)} ⭐ · needs ${fmtNum(seq.target.bansAllTime)} all-time bans${eta}</div>`;
+    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)}`;
+    html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
   }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
