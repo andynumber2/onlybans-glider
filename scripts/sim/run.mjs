@@ -5,6 +5,7 @@
 //   --set ops.notch=false       disable one routine
 //   --bundle index-X.js         run an older game build from research/site/
 //   --save FILE                 start from a game save (localStorage `click2ban-save` text)
+//   --raf MS                    animation frame period (default 50; 16 = browser's 60 fps)
 //   --record FILE               save every game action (with its tick and the
 //                               game's RNG state) for scripts/sim/replay.mjs
 // Prints a JSON summary on the last line for scripting.
@@ -40,7 +41,7 @@ for (const kv of opt.set) {
 
 const wall0 = realPerf.now();
 const save = opt.save ? (await readFile(opt.save, 'utf8')).trim() : null;
-const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save });
+const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save, rafMs: opt.raf ?? 50 });
 // Every action the game applies, as the server would receive it: tick, the
 // action, and the RNG state and all-time bans just before it was applied.
 const recorded = [];

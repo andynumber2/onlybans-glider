@@ -22,6 +22,11 @@ const CONFIG_SETS = {
     gain3: [...SAVE, '--set', 'ops.sequelGain=3'],
     gain4: [...SAVE],
   },
+  // Simulator speed: animation frames at 16 ms (browser) vs 50 ms (default).
+  raf: {
+    raf16: [...SAVE, '--raf', '16'],
+    raf50: [...SAVE],
+  },
   stealth: {
     human: [],
     steady: ['--set', 'stealth=false'],

@@ -9,7 +9,9 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { performance as realPerf } from 'node:perf_hooks';
+import { createRequire } from 'node:module';
 
+const idlUtils = createRequire(import.meta.url)('jsdom/lib/jsdom/living/generated/utils.js');
 const SITE = resolve('research/site');
 
 // Small seeded PRNG (mulberry32) so runs are repeatable.
@@ -139,7 +141,11 @@ function hookDispatcher(src) {
 // `click2ban-save` (plain JSON; copy it in the browser console with
 // `copy(localStorage.getItem('click2ban-save'))`). The fake clock starts one
 // second after the save's lastSave so the game grants no offline earnings.
-export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null } = {}) {
+// rafMs: animation frame period (16 = the browser's 60 fps). The game's frame
+// loop only draws, but it is the largest CPU cost, so 50 ms runs about 30%
+// faster; the game's DOM (button states, pop-ups) then refreshes less often.
+// 50 vs 16 showed no consistent score difference (2026-10-19, 6 seeds).
+export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null, rafMs = 50 } = {}) {
   if (startMs === null) {
     startMs = Date.UTC(2026, 9, 15);
     if (save) startMs = JSON.parse(save).lastSave + 1000;
@@ -160,13 +166,9 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   }
   const bundleUrl = pathToFileURL(assetPath).href;
 
-  // Node has no requestAnimationFrame; give it one so the clock can fake it.
-  define('requestAnimationFrame', cb => setTimeout(() => cb(performance.now()), 16));
-  define('cancelAnimationFrame', id => clearTimeout(id));
   const clock = FakeTimers.withGlobal(globalThis).install({
     now: startMs,
-    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance',
-      'requestAnimationFrame', 'cancelAnimationFrame'],
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'],
   });
   Math.random = seeded(seed);
 
@@ -177,6 +179,19 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   const w = dom.window;
   installBrowserGlobals(w, clock);
   w.Math.random = Math.random;
+  // Animation frames on the fake clock (Node has none; fake-timers' own are
+  // fixed at 16 ms).
+  const raf = cb => clock.setTimeout(() => cb(performance.now()), rafMs);
+  const caf = id => clock.clearTimeout(id);
+  define('requestAnimationFrame', raf);
+  define('cancelAnimationFrame', caf);
+  w.requestAnimationFrame = raf;
+  w.cancelAnimationFrame = caf;
+  // jsdom configures its selector engine to allow duplicate ids, so every
+  // querySelector('#x') walks the whole tree (about 19% of a run's CPU).
+  // Without that, it uses the document's id index. The game has no duplicate ids.
+  w.document.querySelector('html');
+  idlUtils.implForWrapper(w.document)._nwsapi.configure({ IDS_DUPES: false });
 
   // The userscript finds the bundle through this tag and re-imports its URL.
   const tag = w.document.createElement('script');
