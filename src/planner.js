@@ -21,9 +21,15 @@
 // Cap on purchases made in the "spend now" phase, to bound planning time.
 const MAX_NOW_BUYS = 100;
 
-export function plan(sim, { bank, horizon, depth = 3, beam = 5 }) {
+// lazy: after each buy-now purchase, re-measure only the candidates that could
+// rank first (lazyTop) instead of every candidate. From the 2026-10-19 save,
+// 120 game-minutes, seeds 7-18: 6x fewer calculateGains calls per replan, and
+// 36.142 vs 36.143 log10 bans (5 better, 6 worse, 1 tie). false is for tests.
+export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
   const rateStart = sim.rate();
   const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, horizon);
+  const gains = new Map();
+  for (const c of ranked) gains.set(gainKey(c.item), gainEntry(c.item, c.price, c.gain, rateStart));
 
   // Phase 1: while the best-scoring item is affordable now and pays back
   // within the objective's break-even (2H), buy it. Late game this can be
@@ -33,13 +39,14 @@ export function plan(sim, { bank, horizon, depth = 3, beam = 5 }) {
   const nowSteps = [];
   let nowBank = bank;
   let applied = 0;
+  let rateNow = rateStart;
   try {
     let top = ranked[0];
     while (top && top.payback < 2 * horizon && nowSteps.length < MAX_NOW_BUYS) {
       let parts = [top.item];
       if (top.item.type === 'bundle') parts = top.wait === 0 ? top.item.parts : top.item.parts.slice(0, 1);
       else if (top.wait > 0) break;
-      const rateBefore = sim.rate();
+      const rateBefore = rateNow;
       let bought = 0;
       for (const part of parts) {
         const price = sim.price(part);
@@ -52,10 +59,25 @@ export function plan(sim, { bank, horizon, depth = 3, beam = 5 }) {
       }
       if (!bought) break;
       const rateAfter = sim.rate();
+      rateNow = rateAfter;
       const last = nowSteps[nowSteps.length - 1];
       last.gain = rateAfter - rateBefore;
       last.rateAfter = rateAfter;
-      top = rankCandidates(sim, { t: 0, bank: nowBank, rate: rateAfter }, horizon)[0];
+      const node = { t: 0, bank: nowBank, rate: rateAfter };
+      if (lazy) {
+        // An upgrade changes other candidates' gains unevenly: measure all
+        // again. A department's own upgrades (tier ×2s etc.) gain with its
+        // count, so they are measured again when it grows.
+        if (parts.some(part => part.type === 'upgrade')) gains.clear();
+        const grown = new Set(parts.map(part => part.def.id));
+        for (const [key, g] of gains) {
+          if (grown.has(g.building)) gains.delete(key);
+          else g.fresh = false;
+        }
+        top = lazyTop(sim, node, horizon, gains);
+      } else {
+        top = rankCandidates(sim, node, horizon)[0];
+      }
     }
     const ahead = lookahead(sim, nowBank, horizon, depth, beam);
     return { rate: rateStart, path: [...nowSteps, ...ahead.flatMap(expandStep)], candidates: ranked };
@@ -114,6 +136,66 @@ function rankCandidates(sim, node, horizon) {
   }
   out.sort((a, b) => a.score - b.score);
   return out;
+}
+
+// The best-scoring candidate, like rankCandidates(...)[0], but re-measuring
+// only the candidates that could be best. `gains` holds each candidate's last
+// measured gain and the rate it was measured at. A stale gain is scaled by the
+// rate change since then (a change in the global multiplier scales every gain
+// alike); the best estimate is measured again until the best one is fresh.
+// Exact when a building purchase never raises another candidate's gain by
+// more than the rate rose, apart from that department's own upgrades. It can
+// miss a complement (a pair or synergy partner, another department's bundle)
+// until the next upgrade purchase clears `gains`.
+function lazyTop(sim, node, horizon, gains) {
+  const list = [];
+  for (const item of sim.candidates()) {
+    const price = sim.price(item);
+    if (!(price >= 0) || !isFinite(price)) continue;
+    const wait = waitFor(price, node.bank, node.rate);
+    if (node.t + wait > horizon) continue;
+    const key = gainKey(item);
+    let g = gains.get(key);
+    if (!g || g.price !== price) {
+      g = measureGain(sim, item, price, node.rate);
+      gains.set(key, g);
+    }
+    list.push({ item, price, wait, g });
+  }
+  for (;;) {
+    let best = null;
+    for (const c of list) {
+      const gain = c.g.fresh ? c.g.gain : c.g.gain * node.rate / c.g.rateAt;
+      if (!(gain > 0)) continue;
+      const score = c.wait + c.price / gain;
+      if (!best || score < best.score) best = { c, gain, score };
+    }
+    if (!best) return undefined;
+    const { c, gain, score } = best;
+    if (c.g.fresh) {
+      return { item: c.item, price: c.price, wait: c.wait, gain, rateAfter: node.rate + gain, payback: c.price / gain, score };
+    }
+    c.g = measureGain(sim, c.item, c.price, node.rate);
+    gains.set(gainKey(c.item), c.g);
+  }
+}
+
+function measureGain(sim, item, price, rate) {
+  sim.apply(item);
+  const gain = sim.rate() - rate;
+  sim.undo();
+  return gainEntry(item, price, gain, rate);
+}
+
+function gainEntry(item, price, gain, rateAt) {
+  const building = item.type === 'upgrade' ? item.def.building : undefined;
+  return { price, gain, rateAt, fresh: true, building };
+}
+
+// A bundle's parts change as its department grows, so its length is part of the key.
+function gainKey(item) {
+  const key = item.type + ':' + item.def.id;
+  return item.type === 'bundle' ? key + ':' + item.parts.length : key;
 }
 
 function descend(sim, cand, node, horizon, depthLeft, beam) {

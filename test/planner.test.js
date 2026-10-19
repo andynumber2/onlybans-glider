@@ -16,7 +16,7 @@ function mockSim(defs, { upgrades = [] } = {}) {
       ? item.def.cost * Math.pow(1.15, owned[item.def.id])
       : item.def.price,
     rate: () => defs.reduce((sum, d) => {
-      const mult = upgrades.filter(u => bought.has(u.id) && u.target === d.id).length ? 2 : 1;
+      const mult = upgrades.filter(u => bought.has(u.id) && u.building === d.id).length ? 2 : 1;
       return sum + owned[d.id] * d.bps * mult;
     }, 0),
     apply(item) {
@@ -80,7 +80,7 @@ test('longer horizon allows saving for a big purchase', () => {
 
 test('values upgrades through the rate function', () => {
   const sim = mockSim([{ id: 'b', cost: 1000, bps: 1 }], {
-    upgrades: [{ id: 'x2', price: 50, target: 'b' }],
+    upgrades: [{ id: 'x2', price: 50, building: 'b' }],
   });
   sim.owned.b = 20;
   const r = plan(sim, { bank: 50, horizon: 600 });
@@ -199,4 +199,43 @@ test('trendEta extrapolates log growth of the current sequel', () => {
   assert.equal(trendEta(snaps.slice(0, 6), 1e33, 104 * min), null);
   const flat = snaps.map(x => ({ ...x, all: 1e30 }));
   assert.equal(trendEta(flat, 1e33, now), Infinity);
+});
+
+test('lazy buy-now ranking matches the full ranking', () => {
+  const pathKeys = r => r.path.map(s => key(s.item) + '@' + s.at.toFixed(6));
+  const cases = [
+    () => {
+      const sim = mockSim([
+        { id: 'a', cost: 10, bps: 0.5 },
+        { id: 'b', cost: 120, bps: 7 },
+        { id: 'c', cost: 1500, bps: 60 },
+      ], { upgrades: [{ id: 'xa', price: 400, building: 'a' }, { id: 'xc', price: 9000, building: 'c' }] });
+      sim.owned.a = 4;
+      return sim;
+    },
+    thresholdSim,
+  ];
+  for (const make of cases) {
+    for (const bank of [500, 1e4, 1e6]) {
+      const full = plan(make(), { bank, horizon: 900, depth: 1, lazy: false });
+      const lazy = plan(make(), { bank, horizon: 900, depth: 1 });
+      assert.deepEqual(pathKeys(lazy), pathKeys(full));
+    }
+  }
+});
+
+test('lazy ranking measures fewer rates than the full ranking', () => {
+  const defs = Array.from({ length: 12 }, (_, i) => ({ id: 'd' + i, cost: 10 * 8 ** i, bps: 0.5 * 6 ** i }));
+  const counted = lazy => {
+    const sim = mockSim(defs);
+    sim.owned.d0 = 1;
+    const rate = sim.rate;
+    let n = 0;
+    sim.rate = () => { n++; return rate(); };
+    plan(sim, { bank: 1e9, horizon: 3600, depth: 1, lazy });
+    return n;
+  };
+  const full = counted(false);
+  const lazy = counted(true);
+  assert.ok(lazy * 1.5 < full, `lazy ${lazy} vs full ${full}`);
 });
