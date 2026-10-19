@@ -40,3 +40,15 @@ test('ships only when production would at least quadruple', () => {
   assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 1.47e27 }).ship, true);
   assert.equal(sequelPlan({ level: 42573, reputation: 0, owned, bansAllTime: 0 }).pending, 0);
 });
+
+test('target is the first star count that ships', () => {
+  const owned = new Set(['legacy', 'reputation1', 'reputation2']);
+  const state = { level: 42573, reputation: 40098, owned };
+  const { target } = sequelPlan({ ...state, bansAllTime: 6.3e26 });
+  assert.ok(target.pending > 0);
+  assert.equal(prestigeStars(target.bansAllTime), 42573 + target.pending);
+  assert.equal(sequelPlan({ ...state, bansAllTime: target.bansAllTime }).ship, true);
+  const before = ((42573 + target.pending - 1) ** 3) * 1e12 * (1 + 1e-12);
+  assert.equal(sequelPlan({ ...state, bansAllTime: before }).ship, false);
+  assert.equal(sequelPlan({ ...state, bansAllTime: 1.47e27 }).target, null);
+});

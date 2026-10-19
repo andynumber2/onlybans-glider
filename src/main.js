@@ -192,6 +192,12 @@ function render(game, ui, autoBought) {
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   html += `<div>+${fmtNum(seq.pending)} ⭐ pending · ×${seq.multNow.toFixed(2)} → ×${seq.multAfter.toFixed(2)}` +
     `${seq.ship ? ' · <b>ship</b>' : ''}</div>`;
+  if (seq.target) {
+    const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+    let eta = '';
+    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)} at current rate`;
+    html += `<div>Ships at +${fmtNum(seq.target.pending)} ⭐ · needs ${fmtNum(seq.target.bansAllTime)} all-time bans${eta}</div>`;
+  }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);

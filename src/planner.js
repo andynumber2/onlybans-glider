@@ -253,11 +253,41 @@ export function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 }
 
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
+// When not shipping yet, `target` says when we would: the fewest pending
+// stars that pass the ship rule, and the all-time bans that give them.
 export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
+  const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
+  const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
+  return { pending, ...now, target };
+}
+
+function shipCheck(level, reputation, owned, pending, gain, spendAll) {
   const multNow = 1 + level * 0.01 * prestigeShare(owned);
   const buys = prestigeBuys(owned, reputation + pending, { spendAll });
   const after = new Set([...owned, ...buys]);
   const multAfter = 1 + (level + pending) * 0.01 * prestigeShare(after);
-  return { pending, buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
+  return { buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
+}
+
+// More pending stars never lower multAfter (review tiers are bought first),
+// so the ship point is found by doubling, then bisecting.
+function shipTarget(level, reputation, owned, pending, gain, spendAll) {
+  const ships = p => shipCheck(level, reputation, owned, p, gain, spendAll).ship;
+  let lo = pending;
+  let hi = Math.max(1, pending * 2);
+  while (!ships(hi)) {
+    lo = hi;
+    hi *= 2;
+    if (hi > 2 ** 60) return null;
+  }
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ships(mid)) hi = mid;
+    else lo = mid;
+  }
+  const stars = level + hi;
+  let bans = stars ** 3 * 1e12;
+  while (prestigeStars(bans) < stars) bans *= 1 + 1e-15;
+  return { pending: hi, bansAllTime: bans };
 }

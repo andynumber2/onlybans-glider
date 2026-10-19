@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.21.5
+// @version      0.21.6
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,8 +11,8 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-DjdI4Fjz.js';
-const VERSION = '0.21.5';
+const ANALYZED_BUILD = 'index-DKMHaj0D.js';
+const VERSION = '0.21.6';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -270,13 +270,43 @@ function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 }
 
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
+// When not shipping yet, `target` says when we would: the fewest pending
+// stars that pass the ship rule, and the all-time bans that give them.
 function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
+  const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
+  const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
+  return { pending, ...now, target };
+}
+
+function shipCheck(level, reputation, owned, pending, gain, spendAll) {
   const multNow = 1 + level * 0.01 * prestigeShare(owned);
   const buys = prestigeBuys(owned, reputation + pending, { spendAll });
   const after = new Set([...owned, ...buys]);
   const multAfter = 1 + (level + pending) * 0.01 * prestigeShare(after);
-  return { pending, buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
+  return { buys, multNow, multAfter, ship: pending > 0 && multAfter >= multNow * gain };
+}
+
+// More pending stars never lower multAfter (review tiers are bought first),
+// so the ship point is found by doubling, then bisecting.
+function shipTarget(level, reputation, owned, pending, gain, spendAll) {
+  const ships = p => shipCheck(level, reputation, owned, p, gain, spendAll).ship;
+  let lo = pending;
+  let hi = Math.max(1, pending * 2);
+  while (!ships(hi)) {
+    lo = hi;
+    hi *= 2;
+    if (hi > 2 ** 60) return null;
+  }
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ships(mid)) hi = mid;
+    else lo = mid;
+  }
+  const stars = level + hi;
+  let bans = stars ** 3 * 1e12;
+  while (prestigeStars(bans) < stars) bans *= 1 + 1e-15;
+  return { pending: hi, bansAllTime: bans };
 }
 
 // ---- src/game.js ----
@@ -2376,6 +2406,12 @@ function render(game, ui, autoBought) {
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   html += `<div>+${fmtNum(seq.pending)} ⭐ pending · ×${seq.multNow.toFixed(2)} → ×${seq.multAfter.toFixed(2)}` +
     `${seq.ship ? ' · <b>ship</b>' : ''}</div>`;
+  if (seq.target) {
+    const left = seq.target.bansAllTime - game.G.s.bansAllTime;
+    let eta = '';
+    if (result.rate > 0) eta = ` · ~${fmtTime(left / result.rate)} at current rate`;
+    html += `<div>Ships at +${fmtNum(seq.target.pending)} ⭐ · needs ${fmtNum(seq.target.bansAllTime)} all-time bans${eta}</div>`;
+  }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);

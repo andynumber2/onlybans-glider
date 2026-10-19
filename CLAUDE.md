@@ -96,6 +96,8 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 - Anti anti-cheat on vs off: ~22× fewer bans with human pacing (every seed). User keeps it on.
 - Sequels (from the user's 2026-10-18 save, seeds 7-9): 3 h, never 26.15 / ship at ×2 27.05 / ×4 27.17 / ×2 spending all reputation 26.81 (log10 bans); 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19, which shipped 5-6 small sequels because waves make gains bursty. Shipped ×4, saving reputation for the next review tier (v0.21.0). `experiments.mjs ... sequel` sweeps ×3/×4/×6.
 
+- Idle bank (2026-10-19, 6 h from the 2026-10-18 save, seeds 7-13): live export showed "nothing planned" for 26-33 min late in sequels while the bank reached 8-15 h of income (wiped at the sequel). Spending the bank on best-payback buildings when no step is planned: mean 33.37 vs hold 33.32 log10 bans, 4 wins / 2 losses / 1 tie. No consistent winner; not shipped (code reverted).
+
 ## Next up (queue)
 
 1. Sequel follow-ups: watch the user's first automated sequels. Late-game sims start from a save: `node scripts/sim/run.mjs --save research/tmp/save-2026-10-18.txt` (7.72e25 all-time, 0 sequels, gitignored; copy a fresh one in the browser console with `copy(localStorage.getItem('click2ban-save'))`, plain JSON).
