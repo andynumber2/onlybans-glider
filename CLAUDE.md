@@ -110,7 +110,7 @@ Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout
 
 ## Next up (queue)
 
-(empty)
+- Sequel threshold for the 1e38 cap (build B3MWvSJR): the race is now time to cap, not total bans. Toy model (`scripts/analysis/sequel-model.py` logic, run 2026-10-20 from the 2026-10-19 save) puts ×1.4-1.6 about 4 h (~14%) sooner than ×2 (25 vs 29 h with income ×4 per sequel; 50 vs 54 h with ×2). Verify in the real sim: `--set ops.sequelGain=1.5` vs 2, from the save, seeds 7-15, long enough for every run to cap (~48 h game time). `run.mjs` has no time-to-cap field yet: add one from `G.s.capped.ticks` and compare on that. Also check whether the planner's `bank(H) + rate(H) * H` objective still fits once the cap is close, and whether to ship the final sequel at all near 1e38.
 
 - Sim saves: `research/tmp/save-2026-10-19.txt` (level 90.46M, 7 sequels, 7.40e35 all-time; gitignored). Copy a fresh one in the browser console with `copy(localStorage.getItem('click2ban-save'))` (plain JSON). Measured 2026-10-19: 9 parallel 24 h runs take ~53 min wall, 18 take ~65 min.
 
