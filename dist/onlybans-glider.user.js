@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.22.0
+// @version      0.23.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-DKMHaj0D.js';
-const VERSION = '0.22.0';
+const VERSION = '0.23.0';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -311,7 +311,10 @@ const RESERVE_FREE_SHARE = 0.01;
 // (2026-10-18, seeds 7-9): 3 h, never 26.15 / ×2 27.05 / ×4 27.17 log10
 // bans; 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19,
 // which shipped 5-6 small sequels because waves make gains bursty.
-const SHIP_GAIN = 4;
+// Late game (2026-10-19 save, sequel 7) income is linear once production
+// plateaus, so ×4 (64× all-time bans) stopped shipping. 24 h, seeds 7-15:
+// ×1.6 37.68 / ×2 37.73 / ×4 37.41; ×2 beat ×4 on all 9 seeds.
+const SHIP_GAIN = 2;
 
 function prestigeStars(bansAllTime) {
   if (!(bansAllTime >= 1e12)) return 0;
@@ -816,7 +819,7 @@ const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
   { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
-  { key: 'sequel', label: 'Ship sequels (when production would at least ×4) and buy the Reputation shop' },
+  { key: 'sequel', label: 'Ship sequels (when production would at least ×2) and buy the Reputation shop' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -2520,7 +2523,7 @@ function render(game, ui, autoBought, stats) {
     let eta = '';
     if (!result.path.length) {
       const left = seq.target.bansAllTime - game.G.s.bansAllTime;
-      if (result.rate > 0) eta = ` · idle, ~${fmtTime(left / result.rate)}`;
+      if (result.rate > 0) eta = ` · <span title="Nothing planned: all-time bans grow at the current rate">~${fmtTime(left / result.rate)}</span>`;
     } else {
       const etaMs = trendEta(stats.snapshots(), seq.target.bansAllTime, Date.now());
       if (etaMs === null) eta = ' · ETA measuring';

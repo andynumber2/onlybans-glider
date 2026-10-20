@@ -27,28 +27,32 @@ test('requirements gate purchases', () => {
   assert.deepEqual(prestigeBuys(new Set(), 0), []);
 });
 
-test('ships only when production would at least quadruple', () => {
+test('ships only when production would at least double (or the given gain)', () => {
   const none = new Set();
+  const x4 = { gain: 4 };
   assert.equal(sequelPlan({ level: 0, reputation: 0, owned: none, bansAllTime: 1e20 }).ship, false); // 464 stars: x1.23
   const first = sequelPlan({ level: 0, reputation: 0, owned: none, bansAllTime: 7.7164688275347236e25 });
   assert.equal(first.pending, 42573);
   assert.ok(first.ship && first.multAfter > 100);
   const owned = new Set(['legacy', 'reputation1', 'reputation2']);
-  // x2 from more stars alone is not enough...
-  assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 6.3e26 }).ship, false);
-  // ...but Very Positive becoming affordable (share 25% -> 50%) is.
-  assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 1.47e27 }).ship, true);
+  // x2 from more stars alone ships by default (SHIP_GAIN 2)...
+  assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 6.3e26 }).ship, true);
+  // ...but not at x4...
+  assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 6.3e26 }, x4).ship, false);
+  // ...until Very Positive becomes affordable (share 25% -> 50%).
+  assert.equal(sequelPlan({ level: 42573, reputation: 40098, owned, bansAllTime: 1.47e27 }, x4).ship, true);
   assert.equal(sequelPlan({ level: 42573, reputation: 0, owned, bansAllTime: 0 }).pending, 0);
 });
 
 test('target is the first star count that ships', () => {
   const owned = new Set(['legacy', 'reputation1', 'reputation2']);
   const state = { level: 42573, reputation: 40098, owned };
-  const { target } = sequelPlan({ ...state, bansAllTime: 6.3e26 });
+  const x4 = { gain: 4 };
+  const { target } = sequelPlan({ ...state, bansAllTime: 6.3e26 }, x4);
   assert.ok(target.pending > 0);
   assert.equal(prestigeStars(target.bansAllTime), 42573 + target.pending);
-  assert.equal(sequelPlan({ ...state, bansAllTime: target.bansAllTime }).ship, true);
+  assert.equal(sequelPlan({ ...state, bansAllTime: target.bansAllTime }, x4).ship, true);
   const before = ((42573 + target.pending - 1) ** 3) * 1e12 * (1 + 1e-12);
-  assert.equal(sequelPlan({ ...state, bansAllTime: before }).ship, false);
-  assert.equal(sequelPlan({ ...state, bansAllTime: 1.47e27 }).target, null);
+  assert.equal(sequelPlan({ ...state, bansAllTime: before }, x4).ship, false);
+  assert.equal(sequelPlan({ ...state, bansAllTime: 1.47e27 }, x4).target, null);
 });

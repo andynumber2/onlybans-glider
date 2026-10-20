@@ -294,7 +294,10 @@ const RESERVE_FREE_SHARE = 0.01;
 // (2026-10-18, seeds 7-9): 3 h, never 26.15 / ×2 27.05 / ×4 27.17 log10
 // bans; 6 h, ×4 29.41 vs a gain-per-hour (marginal = average) rule 28.19,
 // which shipped 5-6 small sequels because waves make gains bursty.
-export const SHIP_GAIN = 4;
+// Late game (2026-10-19 save, sequel 7) income is linear once production
+// plateaus, so ×4 (64× all-time bans) stopped shipping. 24 h, seeds 7-15:
+// ×1.6 37.68 / ×2 37.73 / ×4 37.41; ×2 beat ×4 on all 9 seeds.
+export const SHIP_GAIN = 2;
 
 export function prestigeStars(bansAllTime) {
   if (!(bansAllTime >= 1e12)) return 0;

@@ -197,7 +197,7 @@ function render(game, ui, autoBought, stats) {
     let eta = '';
     if (!result.path.length) {
       const left = seq.target.bansAllTime - game.G.s.bansAllTime;
-      if (result.rate > 0) eta = ` · idle, ~${fmtTime(left / result.rate)}`;
+      if (result.rate > 0) eta = ` · <span title="Nothing planned: all-time bans grow at the current rate">~${fmtTime(left / result.rate)}</span>`;
     } else {
       const etaMs = trendEta(stats.snapshots(), seq.target.bansAllTime, Date.now());
       if (etaMs === null) eta = ' · ETA measuring';
