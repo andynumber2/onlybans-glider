@@ -20,7 +20,9 @@ Public launch (2026-10-16): the game is now a public build. Starting with build 
 - `src/main.js`: wiring and timers (replan ≥2 s on a 5% CPU budget, ops 400 ms, stats 1 s).
 - `scripts/build.sh`: concatenates src (strips `export`) into `dist/onlybans-glider.user.js`, stamping `ANALYZED_BUILD`. File order matters only for top-level consts used at load.
 - `scripts/fetch.sh`: downloads the current game bundle to `research/site/` (gitignored) and reports changes. `scripts/bundle-diff.py OLD NEW`: diff two builds despite re-minified names. `scripts/feature-scan.py`: compare the bundle's feature keys to `FEATURES.md`.
-- `scripts/sim/`: offline simulator (see below). `scripts/probe.mjs`, `scripts/e2e*.mjs`: live headless tests (blocked, see Testing).
+- `scripts/sim/`: offline simulator (see below).
+- `scripts/analysis/`: reusable research scripts that read sim output or model game rules (not part of the sim). `sim-sequels.py LOGS`: ship times, all-time bans and error counts from sim logs. `sequel-model.py`: toy model of ship threshold vs total bans (basis of `SEQUELS.md`). `sequel-forecast.py`: next 10 sequels from the 2026-10-19 save.
+- `SEQUELS.md`: why sequels ship at ×2 (the ramp/stars loop, how much the threshold matters). `scripts/probe.mjs`, `scripts/e2e*.mjs`: live headless tests (blocked, see Testing).
 
 Commands: `npm run build`, `npm test`, `npm run release` (build + tests + layout check; run before every user-installed build), `bash scripts/fetch.sh`, `npm run experiments -- 120 7,8,9`, `npm run progress`.
 
