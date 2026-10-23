@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.24.3
+// @version      0.24.5
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -11,8 +11,8 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-DBHDPHUA.js';
-const VERSION = '0.24.3';
+const ANALYZED_BUILD = 'index-ClLVmN6W.js';
+const VERSION = '0.24.5';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -1058,6 +1058,22 @@ function usable(sel) {
   return el;
 }
 
+// The game sets these buttons' `disabled` in its render loop, which stops in a
+// hidden tab, so right after use a button still reads as ready and every press
+// is refused (thousands of refused coin-locks in the input log). Gate on the
+// same timers the game checks.
+const STAFF_BUSY = {
+  '#coinBtn': (st) => st.coinLock.cd > 0 || st.coinLock.t > 0,
+  '#coffeeBtn': (st) => st.coffee.cd > 0 || st.coffee.t > 0,
+  '#hammerBtn': (st) => st.hammer.cd > 0,
+  '#leverBtn': (st) => st.lever.cd > 0 || st.lever.party > 0,
+};
+
+function staffButton(G, sel) {
+  if (STAFF_BUSY[sel](G.s.staff)) return null;
+  return usable(sel);
+}
+
 // Incident cards carry no id; match the card by its title.
 function incidentCard(inc) {
   for (const card of document.querySelectorAll('.incident')) {
@@ -1344,14 +1360,14 @@ const ROUTINES = {
     if (kernelPanic(G)) maxBurnout = 90;
     if (thermosCrunch(game)) maxBurnout = 100;
     const ok = st.burnout < maxBurnout && !st.week.weekend && st.lever.party <= 0;
-    const btn = usable('#coffeeBtn');
+    const btn = staffButton(G, '#coffeeBtn');
     if (!ready('coffee', ok && !!btn)) return null;
     if (!click(btn)) return null;
     return 'coffee run';
   },
 
-  callHammer() {
-    const btn = usable('#hammerBtn');
+  callHammer(G) {
+    const btn = staffButton(G, '#hammerBtn');
     if (!ready('callHammer', !!btn)) return null;
     if (!click(btn)) return null;
     return 'called the hammer';
@@ -1363,7 +1379,7 @@ const ROUTINES = {
   // near-full burnout. During a production boost, pull a little early so the
   // party multiplies into it.
   lever(G, enabled, game) {
-    const btn = usable('#leverBtn');
+    const btn = staffButton(G, '#leverBtn');
     let at = LEVER_AT_BURNOUT;
     if (thermosCrunch(game)) at = THERMOS_LEVER_AT;
     if (productionBoost(G) >= 2) at -= 15;
@@ -1439,7 +1455,7 @@ const ROUTINES = {
 
   coinLock(G) {
     const meta = G.s.meta && G.s.meta.cur;
-    const btn = usable('#coinBtn');
+    const btn = staffButton(G, '#coinBtn');
     if (!ready('coin', !!btn && (meta === 'duping' || meta === 'economy'))) return null;
     if (!click(btn)) return null;
     return 'coin-lock';
