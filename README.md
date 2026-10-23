@@ -4,6 +4,10 @@ Tampermonkey userscript for https://onlybans.wtf. It plans the most efficient pu
 
 Every action is a click on the game's DOM, so it goes through the game's input recorder and replays on the server like a human's input. The script never calls game logic to change state.
 
+BanGlider reached the 5e37 cap (Full Enforcement) on 2026-10-23: 3 days 8 hours of play, 9 sequels, server verified.
+
+![Certificate of Total Enforcement awarded to BanGlider](research/full-enforcement-2026-10-23.png)
+
 ## Install
 
 1. Install Tampermonkey. In Chrome, also enable "Allow User Scripts" on the extension's details page, and check Tampermonkey itself is Enabled.
