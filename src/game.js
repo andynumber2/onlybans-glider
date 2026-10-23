@@ -19,7 +19,10 @@ export async function bindGame(win) {
   let upgrades = null;
   let dupe = null;
   let relics = null;
+  // All-time bans cap (build B3MWvSJR on): the only number export this large.
+  let cap = null;
   for (const val of Object.values(mod)) {
+    if (typeof val === 'number' && val >= 1e30 && isFinite(val)) cap = Math.max(cap ?? 0, val);
     if (val && typeof val === 'object' && typeof val.calculateGains === 'function' && val.G) logic = val;
     // Dupe-outbreak minigame state: optional, automation skips it if absent.
     if (val && typeof val === 'object' && 'answer' in val && Array.isArray(val.deck) && Array.isArray(val.done)) dupe = val;
@@ -36,7 +39,7 @@ export async function bindGame(win) {
   if (!upgrades) missing.push('upgrade table');
   if (missing.length) throw new Error('could not find: ' + missing.join(', '));
 
-  return { logic, G: logic.G, buildings, upgrades, dupe, relics, build: script.src.split('/').pop() };
+  return { logic, G: logic.G, buildings, upgrades, dupe, relics, cap, build: script.src.split('/').pop() };
 }
 
 // The game's calculateGains() rewrites its derived production numbers. The

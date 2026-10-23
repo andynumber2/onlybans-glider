@@ -340,11 +340,44 @@ export function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
 // When not shipping yet, `target` says when we would: the fewest pending
 // stars that pass the ship rule, and the all-time bans that give them.
-export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
+//
+// With `cap` (the game's all-time bans cap) and `rate` (all-time bans per game
+// second, null while unknown), the last ship before the cap is timed by
+// `endgameShip` instead of the ×gain rule.
+export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false, cap = null, rate = null, rampS = SHIP_RAMP_S } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
   const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
   const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
-  return { pending, ...now, target };
+  // Shipping at ×gain multiplies stars by about gain, so all-time bans by
+  // gain³ before the next one: if that is past the cap, this ship is the last.
+  const gainAt = now.ship ? bansAllTime : target?.bansAllTime ?? Infinity;
+  if (!cap || gainAt * gain ** 3 < cap) return { pending, ...now, target };
+  const endgame = rate > 0 ? endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll, rampS }) : null;
+  return { pending, ...now, ship: !!endgame?.ship, target: null, endgame };
+}
+
+// Income lost to the ramp after a launch, in game seconds of the income before
+// it (measured ~90-100 min in one shipped run, 2026-10-19).
+export const SHIP_RAMP_S = 95 * 60;
+
+// The ship point (all-time bans) that reaches `cap` soonest when it is the
+// last ship: flat income `rate` until then, `rampS` lost to the ramp, then
+// income × (multAfter / multNow). Compared on a log grid from now to the cap
+// against never shipping. `ship` is true when now is the best point.
+export function endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll = false, rampS = SHIP_RAMP_S, points = 60 } = {}) {
+  const tStay = Math.max(0, cap - bansAllTime) / rate;
+  let best = { at: cap, seconds: tStay };
+  let nowSeconds = null;
+  for (let i = 0; i < points; i++) {
+    const at = bansAllTime * (cap / bansAllTime) ** (i / points);
+    const pending = prestigeStars(at) - level;
+    if (pending <= 0) continue;
+    const { multNow, multAfter } = shipCheck(level, reputation, owned, pending, Infinity, spendAll);
+    const seconds = (at - bansAllTime) / rate + rampS + (cap - at) / (rate * multAfter / multNow);
+    if (i === 0) nowSeconds = seconds;
+    if (seconds < best.seconds) best = { at, seconds };
+  }
+  return { ship: best.at === bansAllTime, bestAt: best.at, seconds: best.seconds, nowSeconds, stay: tStay };
 }
 
 function shipCheck(level, reputation, owned, pending, gain, spendAll) {

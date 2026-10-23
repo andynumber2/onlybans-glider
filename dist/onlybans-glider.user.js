@@ -11,7 +11,7 @@
 
 (() => {
 'use strict';
-const ANALYZED_BUILD = 'index-CN35jcqz.js';
+const ANALYZED_BUILD = 'index-JlW7JWZY.js';
 const VERSION = '0.24.1';
 
 // ---- src/planner.js ----
@@ -357,11 +357,44 @@ function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
 // When not shipping yet, `target` says when we would: the fewest pending
 // stars that pass the ship rule, and the all-time bans that give them.
-function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
+//
+// With `cap` (the game's all-time bans cap) and `rate` (all-time bans per game
+// second, null while unknown), the last ship before the cap is timed by
+// `endgameShip` instead of the ×gain rule.
+function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false, cap = null, rate = null, rampS = SHIP_RAMP_S } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
   const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
   const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
-  return { pending, ...now, target };
+  // Shipping at ×gain multiplies stars by about gain, so all-time bans by
+  // gain³ before the next one: if that is past the cap, this ship is the last.
+  const gainAt = now.ship ? bansAllTime : target?.bansAllTime ?? Infinity;
+  if (!cap || gainAt * gain ** 3 < cap) return { pending, ...now, target };
+  const endgame = rate > 0 ? endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll, rampS }) : null;
+  return { pending, ...now, ship: !!endgame?.ship, target: null, endgame };
+}
+
+// Income lost to the ramp after a launch, in game seconds of the income before
+// it (measured ~90-100 min in one shipped run, 2026-10-19).
+const SHIP_RAMP_S = 95 * 60;
+
+// The ship point (all-time bans) that reaches `cap` soonest when it is the
+// last ship: flat income `rate` until then, `rampS` lost to the ramp, then
+// income × (multAfter / multNow). Compared on a log grid from now to the cap
+// against never shipping. `ship` is true when now is the best point.
+function endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll = false, rampS = SHIP_RAMP_S, points = 60 } = {}) {
+  const tStay = Math.max(0, cap - bansAllTime) / rate;
+  let best = { at: cap, seconds: tStay };
+  let nowSeconds = null;
+  for (let i = 0; i < points; i++) {
+    const at = bansAllTime * (cap / bansAllTime) ** (i / points);
+    const pending = prestigeStars(at) - level;
+    if (pending <= 0) continue;
+    const { multNow, multAfter } = shipCheck(level, reputation, owned, pending, Infinity, spendAll);
+    const seconds = (at - bansAllTime) / rate + rampS + (cap - at) / (rate * multAfter / multNow);
+    if (i === 0) nowSeconds = seconds;
+    if (seconds < best.seconds) best = { at, seconds };
+  }
+  return { ship: best.at === bansAllTime, bestAt: best.at, seconds: best.seconds, nowSeconds, stay: tStay };
 }
 
 function shipCheck(level, reputation, owned, pending, gain, spendAll) {
@@ -440,7 +473,10 @@ async function bindGame(win) {
   let upgrades = null;
   let dupe = null;
   let relics = null;
+  // All-time bans cap (build B3MWvSJR on): the only number export this large.
+  let cap = null;
   for (const val of Object.values(mod)) {
+    if (typeof val === 'number' && val >= 1e30 && isFinite(val)) cap = Math.max(cap ?? 0, val);
     if (val && typeof val === 'object' && typeof val.calculateGains === 'function' && val.G) logic = val;
     // Dupe-outbreak minigame state: optional, automation skips it if absent.
     if (val && typeof val === 'object' && 'answer' in val && Array.isArray(val.deck) && Array.isArray(val.done)) dupe = val;
@@ -457,7 +493,7 @@ async function bindGame(win) {
   if (!upgrades) missing.push('upgrade table');
   if (missing.length) throw new Error('could not find: ' + missing.join(', '));
 
-  return { logic, G: logic.G, buildings, upgrades, dupe, relics, build: script.src.split('/').pop() };
+  return { logic, G: logic.G, buildings, upgrades, dupe, relics, cap, build: script.src.split('/').pop() };
 }
 
 // The game's calculateGains() rewrites its derived production numbers. The
@@ -1367,9 +1403,9 @@ const ROUTINES = {
 
   // Ship a Sequel when sequelPlan says so (src/planner.js), confirm, buy the
   // Reputation shop one crate at a time, then launch.
-  sequel(G, enabled) {
+  sequel(G, enabled, game) {
     const p = G.s.prestige;
-    const opts = sequelOptions(enabled);
+    const opts = sequelOptions(enabled, G, game.cap);
     if (G.ascending) {
       const screen = document.querySelector('#ascendScreen');
       if (!screen) return null;
@@ -1394,7 +1430,7 @@ const ROUTINES = {
       if (!click(confirm)) return null;
       return 'shipped a sequel';
     }
-    const plan = sequelStatus(G, enabled);
+    const plan = sequelStatus(G, enabled, game.cap);
     const btn = usable('#sequelButton');
     if (!ready('sequel:ship', !!btn && plan.ship)) return null;
     if (!click(btn)) return null;
@@ -1636,15 +1672,38 @@ function auditReserve(G, enabled) {
   return Math.ceil(cost);
 }
 
-// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
-function sequelOptions(enabled) {
-  return { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
+// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll,
+// ops.sequelEndgame (time the last ship before the cap by endgameShip).
+function sequelOptions(enabled, G, cap) {
+  const opts = { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
+  if (enabled.sequelEndgame && cap) Object.assign(opts, { cap, rate: incomeRate(G) });
+  return opts;
 }
 
-function sequelStatus(G, enabled) {
+function sequelStatus(G, enabled, cap) {
   const p = G.s.prestige;
   return sequelPlan({ level: p.level, reputation: p.reputation, owned: p.upgrades, bansAllTime: G.s.bansAllTime },
-    sequelOptions(enabled));
+    sequelOptions(enabled, G, cap));
+}
+
+// All-time bans per game second over the last INCOME_WINDOW game minutes of
+// the current sequel, from one sample per game minute; null until
+// INCOME_MIN minutes are in (waves make shorter windows too bursty).
+const INCOME_WINDOW = 30;
+const INCOME_MIN = 20;
+const incomeSamples = [];
+function incomeRate(G) {
+  const last = incomeSamples[incomeSamples.length - 1];
+  if (last && last.sequels !== G.s.prestige.sequels) incomeSamples.length = 0;
+  if (!incomeSamples.length || G.T - incomeSamples[incomeSamples.length - 1].T >= 60 * TICKS_PER_SEC) {
+    incomeSamples.push({ T: G.T, all: G.s.bansAllTime, sequels: G.s.prestige.sequels });
+    if (incomeSamples.length > INCOME_WINDOW + 1) incomeSamples.shift();
+  }
+  const first = incomeSamples[0];
+  const newest = incomeSamples[incomeSamples.length - 1];
+  const seconds = (newest.T - first.T) / TICKS_PER_SEC;
+  if (seconds < INCOME_MIN * 60) return null;
+  return (newest.all - first.all) / seconds;
 }
 
 // Worst-case heat of the wave currently charging, after the audit the
@@ -2547,7 +2606,7 @@ function render(game, ui, autoBought, stats) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  const seq = sequelStatus(game.G, settings.ops);
+  const seq = sequelStatus(game.G, settings.ops, game.cap);
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
@@ -2564,6 +2623,13 @@ function render(game, ui, autoBought, stats) {
       else eta = ` · <span title="Projected from the last 30 min of all-time bans growth; usually early as growth slows">~${fmtTime(etaMs / 1000)}</span>`;
     }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
+  }
+  if (seq.endgame) {
+    const e = seq.endgame;
+    const when = e.bestAt >= game.cap ? 'never ship again' : `last ship at ${fmtNum(e.bestAt)} all-time`;
+    html += `<div title="Flat income at the last 30 game-minutes' rate">Endgame: ${when} · cap in ~${fmtTime(e.seconds)} (never: ~${fmtTime(e.stay)})</div>`;
+  } else if (seq.target === null && !seq.ship && settings.ops.sequelEndgame && game.cap) {
+    html += '<div>Endgame: measuring income</div>';
   }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 

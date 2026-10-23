@@ -10,7 +10,40 @@ const minutes = Number(process.argv[2] ?? 120);
 const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
 const SAVE = ['--save', 'research/tmp/save-2026-10-19.txt'];
+const SAVE_CAP = ['--save', 'research/tmp/save-2026-10-22.txt'];
 const CONFIG_SETS = {
+  // Fresh run to the 5e37 cap (build JlW7JWZY) with the current bot.
+  // Seeds 7-11: 36.95 game hours mean (33.5-41.8), 15-17 sequels, ~50 min wall.
+  fresh: {
+    base: [],
+  },
+  // Fresh run to the 5e37 cap: endgame ship rule (src/planner.js
+  // endgameShip) and planner horizon, against the current bot.
+  freshEndgame: {
+    base: [],
+    endgame: ['--set', 'ops.sequelEndgame=true'],
+    h15m: ['--set', 'horizon=900'],
+    h4h: ['--set', 'horizon=14400'],
+  },
+  // Fresh run to the 5e37 cap: sequel ship ratio sweep. Seeds 7-11, game
+  // hours to cap: ×1.5 46.0 / ×2 35.5 / ×3 48.4 / ×4 44.5.
+  freshSequel: {
+    g15: ['--set', 'ops.sequelGain=1.5'],
+    g2: [],
+    g3: ['--set', 'ops.sequelGain=3'],
+    g4: ['--set', 'ops.sequelGain=4'],
+  },
+  // Time to the 1e38 all-time cap from the 2026-10-22 save (sequel 8,
+  // 2.0e37 all-time): sequel ratio sweep, plus never shipping again.
+  // Seeds 7-11, game hours to cap: ×1.3 18.6 / ×1.45 20.9 / ×1.6 16.5 /
+  // ×2 17.5 / never 25.7. Ratios within noise; ×2 kept.
+  cap: {
+    g13: [...SAVE_CAP, '--set', 'ops.sequelGain=1.3'],
+    g145: [...SAVE_CAP, '--set', 'ops.sequelGain=1.45'],
+    g16: [...SAVE_CAP, '--set', 'ops.sequelGain=1.6'],
+    g2: [...SAVE_CAP],
+    never: [...SAVE_CAP, '--set', 'ops.sequelGain=1000'],
+  },
   // Sequels from the user's late save (42,573 pending stars). 3 h results
   // (seeds 7-9): never ship 26.15, ship at ×2 27.05, ×4 27.17, ×2 spending all
   // reputation 26.81. 6 h: ×4 29.41 vs a gain-per-hour rule 28.19 (removed).
@@ -105,6 +138,7 @@ const rows = results.map(({ name, seed, result: r }) => {
   return `${name.padEnd(16)} seed ${seed}: bansAllTime ${r.bansAllTime.toExponential(3)}  bps ${r.bps.toExponential(3)}` +
     `  waves ${r.waves} tiers ${r.tiers.join('/')}  avgHeat ${r.avgHeat?.toFixed(1)}  golden ${r.goldenClicked}/${r.goldenClicked + r.goldenMissed}` +
     `  clicks ${r.clicks}  perception ${r.perception.toFixed(0)}  burnout ${r.burnout.toFixed(0)}` +
+    `  cap ${r.capSeconds === null ? '-' : (r.capSeconds / 3600).toFixed(2) + 'h'}  sequels ${r.sequels}` +
     `  planner ${r.plannerMs?.mean}/${r.plannerMs?.p95}/${r.plannerMs?.max}ms  wall ${r.wallSeconds}s`;
 });
 console.log(rows.join('\n'));
@@ -116,4 +150,15 @@ for (const name of Object.keys(CONFIGS)) {
   const scores = results.filter(x => x.name === name && x.result).map(x => x.result.score);
   const mean = scores.reduce((a, x) => a + x, 0) / Math.max(1, scores.length);
   console.log(`  ${name.padEnd(16)} ${mean.toFixed(3)}  (${scores.map(x => x.toFixed(2)).join(', ')})`);
+}
+
+// Per config: mean game hours to the 1e38 cap. A run that never capped
+// counts as the full run length, so that mean is a lower bound.
+console.log('\nmean hours to cap by config:');
+for (const name of Object.keys(CONFIGS)) {
+  const rs = results.filter(x => x.name === name && x.result).map(x => x.result);
+  const hours = rs.map(r => (r.capSeconds ?? minutes * 60) / 3600);
+  const mean = hours.reduce((a, x) => a + x, 0) / Math.max(1, hours.length);
+  const uncapped = rs.filter(r => r.capSeconds === null).length;
+  console.log(`  ${name.padEnd(16)} ${mean.toFixed(2)}h  (${hours.map(x => x.toFixed(1)).join(', ')})${uncapped ? `  ${uncapped} never capped` : ''}`);
 }

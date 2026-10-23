@@ -79,6 +79,9 @@ let windowStartBans = 0;
 // Count automation actions by watching the panel's action log.
 const actionCounts = {};
 let lastLogTop = '';
+// Game seconds from the start of this run until all-time bans hit the 1e38
+// cap (`s.capped`); the run stops there.
+let capSeconds = null;
 await sim.run(opt.minutes * 60, s => {
   const top = sim.window.document.querySelector('#obh .opsLog')?.firstElementChild?.textContent ?? '';
   if (top && top !== lastLogTop) {
@@ -112,6 +115,11 @@ await sim.run(opt.minutes * 60, s => {
     windowStartBans = G.s.bansAllTime;
     console.log(`t=${minute}m bansAllTime=${G.s.bansAllTime.toExponential(3)} bps=${G.bps.toExponential(3)} waves=${G.s.wavesLaunched} perception=${G.s.perception.toFixed(1)} notch=${G.s.truth.notch}`);
   }
+  if (G.s.capped && capSeconds === null) {
+    capSeconds = s + 1;
+    console.log(`capped at ${(capSeconds / 3600).toFixed(2)} game hours (sequels ${G.s.prestige.sequels})`);
+    return false;
+  }
 });
 
 if (process.env.SIM_DEBUG) {
@@ -144,6 +152,7 @@ const summary = {
   plannerMs: plannerStats(plannerSamples),
   agentOwned: G.s.upgradesBought.has("tool:agent"),
   rateChecks,
+  capSeconds,
   wallSeconds: Math.round((realPerf.now() - wall0) / 1000),
 };
 if (opt.record) {

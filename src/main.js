@@ -188,7 +188,7 @@ function render(game, ui, autoBought, stats) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  const seq = sequelStatus(game.G, settings.ops);
+  const seq = sequelStatus(game.G, settings.ops, game.cap);
   html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
@@ -205,6 +205,13 @@ function render(game, ui, autoBought, stats) {
       else eta = ` · <span title="Projected from the last 30 min of all-time bans growth; usually early as growth slows">~${fmtTime(etaMs / 1000)}</span>`;
     }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
+  }
+  if (seq.endgame) {
+    const e = seq.endgame;
+    const when = e.bestAt >= game.cap ? 'never ship again' : `last ship at ${fmtNum(e.bestAt)} all-time`;
+    html += `<div title="Flat income at the last 30 game-minutes' rate">Endgame: ${when} · cap in ~${fmtTime(e.seconds)} (never: ~${fmtTime(e.stay)})</div>`;
+  } else if (seq.target === null && !seq.ship && settings.ops.sequelEndgame && game.cap) {
+    html += '<div>Endgame: measuring income</div>';
   }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 

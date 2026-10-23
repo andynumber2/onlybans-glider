@@ -216,7 +216,7 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
       for (let s = 0; s < seconds; s++) {
         clock.tick(1000);
         await new Promise(r => setImmediate(r));
-        if (onSecond) onSecond(s);
+        if (onSecond && onSecond(s) === false) break;
       }
     },
   };

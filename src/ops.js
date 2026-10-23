@@ -555,9 +555,9 @@ const ROUTINES = {
 
   // Ship a Sequel when sequelPlan says so (src/planner.js), confirm, buy the
   // Reputation shop one crate at a time, then launch.
-  sequel(G, enabled) {
+  sequel(G, enabled, game) {
     const p = G.s.prestige;
-    const opts = sequelOptions(enabled);
+    const opts = sequelOptions(enabled, G, game.cap);
     if (G.ascending) {
       const screen = document.querySelector('#ascendScreen');
       if (!screen) return null;
@@ -582,7 +582,7 @@ const ROUTINES = {
       if (!click(confirm)) return null;
       return 'shipped a sequel';
     }
-    const plan = sequelStatus(G, enabled);
+    const plan = sequelStatus(G, enabled, game.cap);
     const btn = usable('#sequelButton');
     if (!ready('sequel:ship', !!btn && plan.ship)) return null;
     if (!click(btn)) return null;
@@ -824,15 +824,38 @@ export function auditReserve(G, enabled) {
   return Math.ceil(cost);
 }
 
-// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
-function sequelOptions(enabled) {
-  return { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
+// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll,
+// ops.sequelEndgame (time the last ship before the cap by endgameShip).
+function sequelOptions(enabled, G, cap) {
+  const opts = { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
+  if (enabled.sequelEndgame && cap) Object.assign(opts, { cap, rate: incomeRate(G) });
+  return opts;
 }
 
-export function sequelStatus(G, enabled) {
+export function sequelStatus(G, enabled, cap) {
   const p = G.s.prestige;
   return sequelPlan({ level: p.level, reputation: p.reputation, owned: p.upgrades, bansAllTime: G.s.bansAllTime },
-    sequelOptions(enabled));
+    sequelOptions(enabled, G, cap));
+}
+
+// All-time bans per game second over the last INCOME_WINDOW game minutes of
+// the current sequel, from one sample per game minute; null until
+// INCOME_MIN minutes are in (waves make shorter windows too bursty).
+const INCOME_WINDOW = 30;
+const INCOME_MIN = 20;
+const incomeSamples = [];
+function incomeRate(G) {
+  const last = incomeSamples[incomeSamples.length - 1];
+  if (last && last.sequels !== G.s.prestige.sequels) incomeSamples.length = 0;
+  if (!incomeSamples.length || G.T - incomeSamples[incomeSamples.length - 1].T >= 60 * TICKS_PER_SEC) {
+    incomeSamples.push({ T: G.T, all: G.s.bansAllTime, sequels: G.s.prestige.sequels });
+    if (incomeSamples.length > INCOME_WINDOW + 1) incomeSamples.shift();
+  }
+  const first = incomeSamples[0];
+  const newest = incomeSamples[incomeSamples.length - 1];
+  const seconds = (newest.T - first.T) / TICKS_PER_SEC;
+  if (seconds < INCOME_MIN * 60) return null;
+  return (newest.all - first.all) / seconds;
 }
 
 // Worst-case heat of the wave currently charging, after the audit the
