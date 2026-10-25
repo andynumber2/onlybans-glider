@@ -150,6 +150,15 @@ function hookDispatcher(src) {
 // loop only draws, but it is the largest CPU cost, so 50 ms runs about 30%
 // faster; the game's DOM (button states, pop-ups) then refreshes less often.
 // 50 vs 16 showed no consistent score difference (2026-10-19, 6 seeds).
+// Exports the golden report effect pick (`CT(wrath)` in build ClLVmN6W, found
+// by content: the red report list starts with "cheatUpdate") as __goldenPick,
+// so scripts/check-golden.mjs can compare src/game.js predictGolden with it.
+function exposeGoldenPick(src) {
+  const m = src.match(/function ([\w$]+)\(([\w$]+)\)\{const [\w$]+=[\w$]+\.s;if\(\2\)\{const [\w$]+=\["cheatUpdate","bustedProvider","exploitLeak"\]/);
+  if (!m) throw new Error('golden report effect pick not found in bundle');
+  return src + `\nexport{${m[1]} as __goldenPick};\n`;
+}
+
 // Rigged rolls, for measuring the most an RNG look-ahead could gain (sim only).
 // The wave heat roll is `.7+.6*C()` (lower heat = better verdict tier).
 // wave10: best of 10 draws, about what waiting a few ticks for a good roll
@@ -193,7 +202,7 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
     const suffix = [hookActions ? 'hook' : null, rig ? `rig-${rig}` : null].filter(Boolean).join('-');
     assetPath = resolve(SITE, 'assets', bundleName.replace(/\.js$/, `-${suffix}.js`));
     let src = await readFile(resolve(SITE, bundleName), 'utf8');
-    if (hookActions) src = hookDispatcher(src);
+    if (hookActions) src = exposeGoldenPick(hookDispatcher(src));
     if (rig) src = rigBundle(src, rig);
     await writeFile(assetPath, src);
   } else {
@@ -245,7 +254,7 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   }
 
   return {
-    clock, window: w, logic, G: logic.G, bundleName, dispatch: mod.__dispatch ?? null,
+    clock, window: w, logic, G: logic.G, bundleName, dispatch: mod.__dispatch ?? null, goldenPick: mod.__goldenPick ?? null,
     // Advance game time in chunks, letting promises settle between them.
     async run(seconds, onSecond) {
       for (let s = 0; s < seconds; s++) {
