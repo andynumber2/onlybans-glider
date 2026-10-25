@@ -111,7 +111,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | Key | Feature | Status | Strategy |
 |---|---|---|---|
 | `relic:gliderMonitors` | Glider dev's monitors | ✅ | Pick first: golden reports in pairs (~+100% production). |
-| `relic:mustacheBin` | Fake mustache bin | ✅ | Pick: each popped evader spawns a golden report. |
+| `relic:mustacheBin` | Fake mustache bin | ✅ | Pick: each popped evader spawns a golden report. With Golden picks, one evader is held at 1 hp and finished during a meltdown. |
 | `relic:thermos` | Night-shift thermos | ✅ | Pick; then crunch (always work weekends, coffee whenever) and pull the Lever at 95 (simulated +32%). |
 | `relic:ringLight` | Ring light | ✅ | Pick: live cases pay more and we never rule wrong. |
 | `relic:noteJar` | Jar of pls-unban notes | ✅ | Pick: overturns bad verdicts. |
@@ -137,7 +137,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | `upgradeKind:pair` | Department pairs | ✅ | Planner. |
 | `upgradeKind:playbook` | Playbooks | ✅ | Planner (global multiplier). |
 | `upgradeKind:trust` | Community Trust | ✅ | Planner once trust unlocks them. |
-| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share. Panel toggle Golden picks (off by default) predicts each report's effect from `s.rng` and clicks only good rolls (sim: 39 h to 12 h to the cap). |
+| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share. Panel toggle Golden picks (off by default) predicts each report's effect from `s.rng` and clicks only good rolls; with two reports up (or a Mustache Bin evader held at 1 hp) it chains a bot storm or report chain into a meltdown (sim: 39 h to 12 h to 8.6 h to the cap). |
 | `upgradeKind:tool` | Log Analyst tools | ✅ | See Tools. |
 | `upgradeKind:escalation` | Escalations | ✅ | Buy all three at ≤15 min of income. |
 | `upgradeKind:truce` | Truce | ✅ | Only when perception ≥80. |

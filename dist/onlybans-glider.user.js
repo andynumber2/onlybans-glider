@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.25.0
+// @version      0.26.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-ClLVmN6W.js';
-const VERSION = '0.25.0';
+const VERSION = '0.26.0';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -1165,17 +1165,7 @@ const ROUTINES = {
         let left = sh.life;
         if (G.s.upgradesBought.has('tool:anomaly')) left = Math.min(left, Math.floor(2.5 * TICKS_PER_SEC) - (sh.maxLife - sh.life));
         const lastChance = left <= GOLDEN_LAST_CHANCE_TICKS;
-        const take = GOLD_RANK.indexOf(effect) <= GOLDEN_TAKE_RANK;
-        if (!take && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
-        // Combo (hidden flag ops.waveCombo): a charged wave launched first
-        // multiplies into the boost. The launch draws from the RNG, so the
-        // next poll predicts again.
-        const wave = take && enabled.waveCombo && COMBO_EFFECTS.has(effect) ? comboWave(G, enabled) : null;
-        if (wave) {
-          if (!ready('combo-wave', true, FAST_REACTION_MS)) return null;
-          if (!click(wave)) return null;
-          return `launched ban wave before golden ${effect}`;
-        }
+        if (!goldenTake(G, effect) && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
         const before = G.s.eventsClicked;
         if (!pointerDown(el)) return null;
         goldenPickState.pending = { effect, clicked: before };
@@ -1185,7 +1175,10 @@ const ROUTINES = {
         if (G.s.eventsClicked > goldenPickState.pending.clicked) return checkGoldenPick(G) ?? `golden ${effect}`;
         return `golden ${effect}`;
       }
-      if (ready('shimmer:' + shimmerKey(el), true)) {
+      // A bot storm inside a meltdown: bots pay the buffed production, so a
+      // person would hurry.
+      const hurry = pick && meltdownLeft(G) > 0;
+      if (ready('shimmer:' + shimmerKey(el), true, hurry ? FAST_REACTION_MS : REACTION_MS)) {
         // Shimmers listen for pointerdown only.
         if (!pointerDown(el)) return null;
         return 'clicked bonus';
@@ -1258,8 +1251,8 @@ const ROUTINES = {
 
   // Evaders are drawn on the canvas; the game hit-tests pointerdowns there.
   // Position math mirrors the game's own layout (yp/bp).
-  evaders(G) {
-    const ev = G.s.evaders[0];
+  evaders(G, enabled, game) {
+    const ev = evaderTarget(G, enabled, game);
     if (!ready('evader:' + (ev ? ev.id + ':' + ev.hp : ''), !!ev)) return null;
     const canvas = document.querySelector('#leftCanvas');
     if (!canvas) return null;
@@ -1840,22 +1833,36 @@ function projectedHeat(G, enabled) {
 // most ticks, so each 400 ms poll is a fresh pick. Sim ceiling (best of 10
 // picks): fresh run to the cap 43.7 -> 12.6 game hours. This look-ahead
 // (seeds 7-13): 39.3 -> 12.2 game hours, faster on 7 of 7, 0 mismatches.
+// With the meltdown chain below: 11.84 -> 8.57, faster on 6 of 7, 1 tie.
 const GOLDEN_TAKE_RANK = 2; // meltdown, botFarmRaid, ringTakedown
 const GOLDEN_LAST_CHANCE_TICKS = 2 * TICKS_PER_SEC;
 const GOLDEN_NEVER = new Set(['exploitLeak', 'cheatUpdate']);
 const goldenNoticed = new WeakSet();
-// Hidden flag ops.waveCombo. Buffs multiply and bots pay 60 s × worth of the
-// buffed production (read from code, build ClLVmN6W), so a ban wave launched
-// first multiplies meltdown and a bot storm. Sim (seeds 7-13): 11.43 vs
-// 11.84 game hours to cap, within noise.
-const COMBO_EFFECTS = new Set(['meltdown', 'botFarmRaid']);
-// The wave button if a wave can launch now (meter at 100%+) and an unaudited
-// wave would stay below tier 2.
-function comboWave(G, enabled) {
-  const btn = usable('#waveBtn');
-  if (!btn || G.s.waveMeter < 1 || productionBoost(G) >= 2) return null;
-  if ((projectedHeat(G, { ...enabled, audit: false }) ?? 0) >= SKIP_AUDIT_MAX_HEAT) return null;
-  return btn;
+// Meltdown chain (part of golden picks). During a meltdown
+// (×666 for 13 s with Long Buffs) bots pay 60 s × worth of the buffed
+// production and a Report Chain's cap becomes half the bank (read from
+// code, build ClLVmN6W), so a second golden is worth far more then:
+//   - two reports on screen: click only a meltdown first, hold the other;
+//   - during a meltdown: click only a bot storm or a Report Chain;
+//   - with the Mustache Bin (an evader finished = a new golden report):
+//     keep one evader at 1 hp and finish it during the next meltdown.
+const CHAIN_DURING = new Set(['botFarmRaid', 'ringTakedown']);
+const CHAIN_MIN_TICKS = 3 * TICKS_PER_SEC; // a storm needs time to spawn bots
+function meltdownLeft(G) {
+  const b = G.s.buffs.find(x => x.key === 'meltdown');
+  return b && b.time >= CHAIN_MIN_TICKS ? b.time : 0;
+}
+function goldenTake(G, effect) {
+  if (meltdownLeft(G) > 0) return CHAIN_DURING.has(effect);
+  const reports = G.shimmers.filter(x => x.type === 'golden' && x.chain === 0).length;
+  if (reports >= 2) return effect === 'meltdown';
+  return GOLD_RANK.indexOf(effect) <= GOLDEN_TAKE_RANK;
+}
+function evaderTarget(G, enabled, game) {
+  const all = G.s.evaders;
+  if (!enabled.goldenPick || !goldenPickState.on || !hasRelic(game, 'mustacheBin') || meltdownLeft(G) > 0) return all[0];
+  const held = all.filter(e => e.hp === 1);
+  return all.find(e => e.hp > 1) ?? (held.length > 1 ? held[1] : undefined);
 }
 // Self-check: each click's prediction against the effect the game applied.
 // A changed build, or a click queued behind a leaderboard check-in (applied
@@ -2195,7 +2202,7 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
       <div class="content muted">Binding to game…</div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
         <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
-        <label class="stealth" title="Predicts each golden report's effect from the game's own RNG and clicks only when the roll is good (meltdown, bot storm, report chain), or anything harmless in its last 2 s. Sim, fresh run to the cap: 39 h to 12 h. A pattern of only good rolls is easy for the developer to spot."><input type="checkbox" data-op="goldenPick"> <b>Golden picks</b> (click when the roll is good)</label>
+        <label class="stealth" title="Predicts each golden report's effect from the game's own RNG and clicks only when the roll is good (meltdown, bot storm, report chain), or anything harmless in its last 2 s. With two reports up it takes a meltdown first and spends the other on a bot storm or report chain during it. Sim, fresh run to the cap: 39 h to 8.6 h. A pattern of only good rolls is easy for the developer to spot."><input type="checkbox" data-op="goldenPick"> <b>Golden picks</b> (click when the roll is good)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>

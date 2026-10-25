@@ -85,7 +85,7 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
       <div class="content muted">Binding to game…</div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
         <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
-        <label class="stealth" title="Predicts each golden report's effect from the game's own RNG and clicks only when the roll is good (meltdown, bot storm, report chain), or anything harmless in its last 2 s. Sim, fresh run to the cap: 39 h to 12 h. A pattern of only good rolls is easy for the developer to spot."><input type="checkbox" data-op="goldenPick"> <b>Golden picks</b> (click when the roll is good)</label>
+        <label class="stealth" title="Predicts each golden report's effect from the game's own RNG and clicks only when the roll is good (meltdown, bot storm, report chain), or anything harmless in its last 2 s. With two reports up it takes a meltdown first and spends the other on a bot storm or report chain during it. Sim, fresh run to the cap: 39 h to 8.6 h. A pattern of only good rolls is easy for the developer to spot."><input type="checkbox" data-op="goldenPick"> <b>Golden picks</b> (click when the roll is good)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>

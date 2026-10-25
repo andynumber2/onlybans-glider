@@ -47,26 +47,22 @@ const CONFIG_SETS = {
   },
   // Fresh run to the 5e37 cap: the bot's golden report look-ahead
   // (ops.goldenPick, predictGolden in src/game.js) against the current bot.
+  // Seeds 7-13 (v0.25.0): base 39.25 / goldenPick 12.24 game hours.
+  // v0.26.0 adds the meltdown chain (goldenTake in src/ops.js): seeds 7-13,
+  // 11.84 -> 8.57, faster on 6 of 7, 1 tie. Variants tried and removed
+  // (CLAUDE.md, golden combo and meltdown chain): wave launched before a
+  // boost golden (seeds 7-27: 11.92 vs 11.68, and 9.05 with the chain),
+  // taking Caught On Stream (11.29), a truce kept running for it (13.95).
   freshGoldPick: {
     base: [],
     goldenPick: ['--set', 'ops.goldenPick=true'],
   },
-  // Fresh run to the 5e37 cap: golden picks with the wave pre-launch before
-  // a meltdown or bot storm golden (ops.waveCombo). Seeds 7-13: goldenPick
-  // 11.84 / waveCombo 11.43 game hours, faster on 4 of 7, 1 tie (noise).
-  // Removed variants (CLAUDE.md, golden combo): caughtCombo 11.29 (also takes
-  // Caught On Stream), caughtTruce 13.95 (slower on 7 of 7).
   // Fresh run to the 5e37 cap with golden picks, Anti anti-cheat off
-  // (no hit-test, no reaction delays, steady 14/s hammer). Compare with
-  // freshWaveCombo's goldenPick (Anti anti-cheat on).
-  // Seeds 7-13: 6.50 game hours, identical on every seed (with no human
+  // (no hit-test, no reaction delays, steady 14/s hammer). Seeds 7-13
+  // (v0.25.0): 6.50 game hours, identical on every seed (with no human
   // pacing the bot never reads Math.random, so --seed changes nothing: n = 1).
   freshStealthOff: {
     goldenPickFast: ['--set', 'ops.goldenPick=true', '--set', 'stealth=false'],
-  },
-  freshWaveCombo: {
-    goldenPick: ['--set', 'ops.goldenPick=true'],
-    waveCombo: ['--set', 'ops.goldenPick=true', '--set', 'ops.waveCombo=true'],
   },
   // Fresh run to the 5e37 cap: more seeds for base vs the deadline objective
   // (freshDeadline's gap was within noise). Seeds 29-43: base 42.1 /
