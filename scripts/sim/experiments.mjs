@@ -51,6 +51,23 @@ const CONFIG_SETS = {
     base: [],
     goldenPick: ['--set', 'ops.goldenPick=true'],
   },
+  // Fresh run to the 5e37 cap: golden picks with the wave pre-launch before
+  // a meltdown or bot storm golden (ops.waveCombo). Seeds 7-13: goldenPick
+  // 11.84 / waveCombo 11.43 game hours, faster on 4 of 7, 1 tie (noise).
+  // Removed variants (CLAUDE.md, golden combo): caughtCombo 11.29 (also takes
+  // Caught On Stream), caughtTruce 13.95 (slower on 7 of 7).
+  // Fresh run to the 5e37 cap with golden picks, Anti anti-cheat off
+  // (no hit-test, no reaction delays, steady 14/s hammer). Compare with
+  // freshWaveCombo's goldenPick (Anti anti-cheat on).
+  // Seeds 7-13: 6.50 game hours, identical on every seed (with no human
+  // pacing the bot never reads Math.random, so --seed changes nothing: n = 1).
+  freshStealthOff: {
+    goldenPickFast: ['--set', 'ops.goldenPick=true', '--set', 'stealth=false'],
+  },
+  freshWaveCombo: {
+    goldenPick: ['--set', 'ops.goldenPick=true'],
+    waveCombo: ['--set', 'ops.goldenPick=true', '--set', 'ops.waveCombo=true'],
+  },
   // Fresh run to the 5e37 cap: more seeds for base vs the deadline objective
   // (freshDeadline's gap was within noise). Seeds 29-43: base 42.1 /
   // deadline 39.3, deadline faster on 10 of 15. Seeds 14-28 of freshDeadline

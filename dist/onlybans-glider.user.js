@@ -1165,7 +1165,17 @@ const ROUTINES = {
         let left = sh.life;
         if (G.s.upgradesBought.has('tool:anomaly')) left = Math.min(left, Math.floor(2.5 * TICKS_PER_SEC) - (sh.maxLife - sh.life));
         const lastChance = left <= GOLDEN_LAST_CHANCE_TICKS;
-        if (GOLD_RANK.indexOf(effect) > GOLDEN_TAKE_RANK && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
+        const take = GOLD_RANK.indexOf(effect) <= GOLDEN_TAKE_RANK;
+        if (!take && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
+        // Combo (hidden flag ops.waveCombo): a charged wave launched first
+        // multiplies into the boost. The launch draws from the RNG, so the
+        // next poll predicts again.
+        const wave = take && enabled.waveCombo && COMBO_EFFECTS.has(effect) ? comboWave(G, enabled) : null;
+        if (wave) {
+          if (!ready('combo-wave', true, FAST_REACTION_MS)) return null;
+          if (!click(wave)) return null;
+          return `launched ban wave before golden ${effect}`;
+        }
         const before = G.s.eventsClicked;
         if (!pointerDown(el)) return null;
         goldenPickState.pending = { effect, clicked: before };
@@ -1834,6 +1844,19 @@ const GOLDEN_TAKE_RANK = 2; // meltdown, botFarmRaid, ringTakedown
 const GOLDEN_LAST_CHANCE_TICKS = 2 * TICKS_PER_SEC;
 const GOLDEN_NEVER = new Set(['exploitLeak', 'cheatUpdate']);
 const goldenNoticed = new WeakSet();
+// Hidden flag ops.waveCombo. Buffs multiply and bots pay 60 s × worth of the
+// buffed production (read from code, build ClLVmN6W), so a ban wave launched
+// first multiplies meltdown and a bot storm. Sim (seeds 7-13): 11.43 vs
+// 11.84 game hours to cap, within noise.
+const COMBO_EFFECTS = new Set(['meltdown', 'botFarmRaid']);
+// The wave button if a wave can launch now (meter at 100%+) and an unaudited
+// wave would stay below tier 2.
+function comboWave(G, enabled) {
+  const btn = usable('#waveBtn');
+  if (!btn || G.s.waveMeter < 1 || productionBoost(G) >= 2) return null;
+  if ((projectedHeat(G, { ...enabled, audit: false }) ?? 0) >= SKIP_AUDIT_MAX_HEAT) return null;
+  return btn;
+}
 // Self-check: each click's prediction against the effect the game applied.
 // A changed build, or a click queued behind a leaderboard check-in (applied
 // after the server's reseed), shows up as mismatches; 3 in the last 20
