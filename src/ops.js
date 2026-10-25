@@ -236,8 +236,39 @@ function incidentCard(inc) {
 }
 
 const ROUTINES = {
-  shimmers(G) {
-    for (const el of document.querySelectorAll('#shimmers .shimmer')) {
+  shimmers(G, enabled, game) {
+    const els = document.querySelectorAll('#shimmers .shimmer');
+    const pick = enabled.goldenPick && goldenPickState.on;
+    if (pick) {
+      const off = checkGoldenPick(G);
+      if (off) return off;
+    }
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      // Golden report look-ahead: elements and G.shimmers are in the same
+      // order (both added at spawn, removed at pop or expiry).
+      const sh = pick && els.length === G.shimmers.length ? G.shimmers[i] : null;
+      if (sh && sh.type === 'golden' && sh.chain === 0 && el.classList.contains('wrath') === !!sh.wrath) {
+        if (!goldenNoticed.has(el)) {
+          if (!ready('shimmer:' + shimmerKey(el), true)) continue;
+          goldenNoticed.add(el);
+        }
+        const effect = predictGolden(game, sh);
+        // Anomaly Detection (bought before the look-ahead was on; it resets
+        // at the next sequel) pops the report itself 2.5 s after it appears.
+        let left = sh.life;
+        if (G.s.upgradesBought.has('tool:anomaly')) left = Math.min(left, Math.floor(2.5 * TICKS_PER_SEC) - (sh.maxLife - sh.life));
+        const lastChance = left <= GOLDEN_LAST_CHANCE_TICKS;
+        if (GOLD_RANK.indexOf(effect) > GOLDEN_TAKE_RANK && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
+        const before = G.s.eventsClicked;
+        if (!pointerDown(el)) return null;
+        goldenPickState.pending = { effect, clicked: before };
+        goldenPickState.picks++;
+        // Applied at once unless queued behind a check-in; check now, before
+        // another click (or Anomaly Detection) overwrites lastEffect.
+        if (G.s.eventsClicked > goldenPickState.pending.clicked) return checkGoldenPick(G) ?? `golden ${effect}`;
+        return `golden ${effect}`;
+      }
       if (ready('shimmer:' + shimmerKey(el), true)) {
         // Shimmers listen for pointerdown only.
         if (!pointerDown(el)) return null;
@@ -883,6 +914,42 @@ export function projectedHeat(G, enabled) {
   const auditing = enabled.audit && G.s.buildings.moderator.amount > 0 && !t.pile.audited;
   const scrub = auditing ? AUDIT_KEEPS : 1;
   return 100 * innocentShare * scrub * HEAT_WORST_ROLL * (1.3 - 0.6 * t.cred / 100);
+}
+
+// Golden report look-ahead (panel toggle ops.goldenPick, off by default):
+// a detectability choice like Anti anti-cheat. Click when the
+// predicted effect (predictGolden in src/game.js) ranks in GOLD_RANK's top
+// GOLDEN_TAKE_RANK + 1, or in the report's last 2 s anything but the two bad
+// ones (a report may expire instead; that costs nothing). The RNG moves on
+// most ticks, so each 400 ms poll is a fresh pick. Sim ceiling (best of 10
+// picks): fresh run to the cap 43.7 -> 12.6 game hours. This look-ahead
+// (seeds 7-13): 39.3 -> 12.2 game hours, faster on 7 of 7, 0 mismatches.
+const GOLDEN_TAKE_RANK = 2; // meltdown, botFarmRaid, ringTakedown
+const GOLDEN_LAST_CHANCE_TICKS = 2 * TICKS_PER_SEC;
+const GOLDEN_NEVER = new Set(['exploitLeak', 'cheatUpdate']);
+const goldenNoticed = new WeakSet();
+// Self-check: each click's prediction against the effect the game applied.
+// A changed build, or a click queued behind a leaderboard check-in (applied
+// after the server's reseed), shows up as mismatches; 3 in the last 20
+// turn the look-ahead off for the session.
+const goldenPickState = { on: true, pending: null, results: [], picks: 0, mismatches: 0 };
+// For the panel and the stats export.
+export function goldenPickStatus(G) {
+  const { on, picks, mismatches, results } = goldenPickState;
+  return { on, picks, mismatches, recentMisses: results.filter(ok => !ok).length, recent: results.length,
+    anomaly: G.s.upgradesBought.has('tool:anomaly') };
+}
+function checkGoldenPick(G) {
+  const p = goldenPickState.pending;
+  if (!p || G.s.eventsClicked <= p.clicked) return null;
+  goldenPickState.pending = null;
+  const r = goldenPickState.results;
+  r.push(G.s.lastEffect === p.effect);
+  if (G.s.lastEffect !== p.effect) goldenPickState.mismatches++;
+  if (r.length > 20) r.shift();
+  if (r.filter(ok => !ok).length < 3) return G.s.lastEffect === p.effect ? null : `golden mismatch ${p.effect} got ${G.s.lastEffect}`;
+  goldenPickState.on = false;
+  return 'golden prediction off (3 mismatches)';
 }
 
 let shimmerSeq = 0;

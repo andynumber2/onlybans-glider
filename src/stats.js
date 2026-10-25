@@ -177,8 +177,9 @@ export async function createStats() {
       return data.snapshots;
     },
 
-    exportJson() {
-      return JSON.stringify(data);
+    // extra: live session state from other modules (e.g. golden picks).
+    exportJson(extra = {}) {
+      return JSON.stringify({ ...data, ...extra });
     },
 
     reset() {

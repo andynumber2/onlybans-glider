@@ -27,7 +27,7 @@ async function start() {
   const ui = createOverlay({
     onChange: () => tick(),
     onRefresh: () => rebind(),
-    onCopyStats: () => navigator.clipboard.writeText(stats.exportJson()),
+    onCopyStats: () => navigator.clipboard.writeText(stats.exportJson(game ? { goldenPick: goldenPickStatus(game.G) } : {})),
     onResetStats: () => stats.reset(),
   });
   bindInputSettings(() => ui.settings);
@@ -98,7 +98,7 @@ async function start() {
       loopHealth.maxGapMs = 0;
       loopHealth.hiddenSeen = false;
     }
-    ui.renderStats(statsHtml(stats.summary()));
+    ui.renderStats(statsHtml(stats.summary()) + goldenStatusHtml(game, ui.settings));
   }, STATS_MS);
 }
 
@@ -115,6 +115,33 @@ function statsHtml(sum) {
   return html;
 }
 
+// Golden picks (ops.goldenPick) status, under Last wave in Stats.
+function goldenStatusHtml(game, settings) {
+  if (!settings.ops.goldenPick) return '';
+  const g = goldenPickStatus(game.G);
+  if (!g.on) return `<div>Golden picks: off · ${g.picks} picks, ${g.mismatches} mismatches</div>`;
+  let html = `<div>Golden picks: on · ${g.picks} picks, ${g.mismatches} mismatches</div>`;
+  if (g.anomaly) html += '<div class="muted">Golden picks limited until next sequel (Anomaly Detection pops reports after 2.5 s)</div>';
+  return html;
+}
+
+// Hidden experiment flag `deadline`: plan for bans earned by the next ship or
+// the cap, whichever comes first (see plan() in src/planner.js). The ETA comes
+// from the last 30 minutes' growth trend (usually early, so the planner errs
+// short); until there is one, 2 × the horizon, the old break-even.
+const MIN_DEADLINE_S = 60;
+function planDeadline(game, settings, stats) {
+  const seq = sequelStatus(game.G, settings.ops, game.cap);
+  if (seq.ship) return MIN_DEADLINE_S;
+  let target = seq.target?.bansAllTime ?? null;
+  if (seq.endgame && seq.endgame.bestAt > game.G.s.bansAllTime) target = seq.endgame.bestAt;
+  if (game.cap && !(target < game.cap)) target = game.cap;
+  if (!target) return 2 * settings.horizon;
+  const etaMs = trendEta(stats.snapshots(), target, Date.now());
+  if (etaMs === null || etaMs === Infinity) return 2 * settings.horizon;
+  return Math.max(MIN_DEADLINE_S, etaMs / 1000);
+}
+
 function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
@@ -122,8 +149,9 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
+  const deadline = settings.deadline ? planDeadline(game, settings, stats) : null;
   const result = withSandbox(game, { clicksPerSec }, sim =>
-    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
+    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam, deadline }));
   const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
@@ -217,8 +245,13 @@ function render(game, ui, autoBought, stats) {
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
+  if (deadline) status += `<div>Planning to: ${fmtTime(deadline)} (next ship or cap)</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
+  if (settings.ops.goldenPick) {
+    const g = goldenPickStatus(game.G);
+    if (!g.on) html += `<div class="err">Golden picks: OFF, ${g.recentMisses} of the last ${g.recent} predictions missed. Ask for a re-check.</div>`;
+  }
   if (game.build !== ANALYZED_BUILD) {
     html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;
   }

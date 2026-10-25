@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.24.5
+// @version      0.25.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-ClLVmN6W.js';
-const VERSION = '0.24.5';
+const VERSION = '0.25.0';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -34,6 +34,12 @@ const VERSION = '0.24.5';
 // Objective: maximize  bank(H) + rate(H) * H.
 // The tail term values production for one more horizon, so a purchase is worth
 // making when it pays back within roughly (2H - time until affordable).
+//
+// With `deadline` (seconds) the objective is instead the bans earned by then:
+// earned(D) = bank + spent + rate * (D - t) at a path's end. All-time bans are
+// what sequel stars and the cap count, and neither the bank nor buildings
+// survive a ship, so D is the time to the next ship or the cap (main.js).
+// Spending is free in this objective; it only costs the purchases it delays.
 
 // Cap on purchases made in the "spend now" phase, to bound planning time.
 const MAX_NOW_BUYS = 100;
@@ -42,14 +48,15 @@ const MAX_NOW_BUYS = 100;
 // rank first (lazyTop) instead of every candidate. From the 2026-10-19 save,
 // 120 game-minutes, seeds 7-18: 6x fewer calculateGains calls per replan, and
 // 36.142 vs 36.143 log10 bans (5 better, 6 worse, 1 tie). false is for tests.
-function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
+function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true, deadline = null }) {
+  const obj = objective(horizon, deadline);
   const rateStart = sim.rate();
-  const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, horizon);
+  const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, obj);
   const gains = new Map();
   for (const c of ranked) gains.set(gainKey(c.item), gainEntry(c.item, c.price, c.gain, rateStart));
 
   // Phase 1: while the best-scoring item is affordable now and pays back
-  // within the objective's break-even (2H), buy it. Late game this can be
+  // within the objective's break-even (2H, or the deadline), buy it. Late game this can be
   // dozens of purchases, which a depth-limited search would never reach.
   // A bundle that isn't affordable yet is still worth working toward: buy its
   // next part now if that part is affordable (the rest stays ranked next time).
@@ -59,7 +66,7 @@ function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
   let rateNow = rateStart;
   try {
     let top = ranked[0];
-    while (top && top.payback < 2 * horizon && nowSteps.length < MAX_NOW_BUYS) {
+    while (top && top.payback < obj.breakEven && nowSteps.length < MAX_NOW_BUYS) {
       let parts = [top.item];
       if (top.item.type === 'bundle') parts = top.wait === 0 ? top.item.parts : top.item.parts.slice(0, 1);
       else if (top.wait > 0) break;
@@ -91,12 +98,12 @@ function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
           if (grown.has(g.building)) gains.delete(key);
           else g.fresh = false;
         }
-        top = lazyTop(sim, node, horizon, gains);
+        top = lazyTop(sim, node, obj, gains);
       } else {
-        top = rankCandidates(sim, node, horizon)[0];
+        top = rankCandidates(sim, node, obj)[0];
       }
     }
-    const ahead = lookahead(sim, nowBank, horizon, depth, beam);
+    const ahead = lookahead(sim, nowBank, obj, depth, beam);
     return { rate: rateStart, path: [...nowSteps, ...ahead.flatMap(expandStep)], candidates: ranked };
   } finally {
     for (let i = 0; i < applied; i++) sim.undo();
@@ -116,13 +123,14 @@ function expandStep(step) {
 }
 
 // Phase 2: depth-limited search over future purchases from the current state.
-function lookahead(sim, bank, horizon, depth, beam) {
+function lookahead(sim, bank, obj, depth, beam) {
   const rate0 = sim.rate();
-  const holdValue = bank + rate0 * horizon * 2;
-  const ranked = rankCandidates(sim, { t: 0, bank, rate: rate0 }, horizon);
+  const root = { t: 0, bank, rate: rate0, spent: 0 };
+  const holdValue = obj.leaf(root);
+  const ranked = rankCandidates(sim, root, obj);
 
   for (const c of ranked.slice(0, beam)) {
-    const sub = descend(sim, c, { t: 0, bank, rate: rate0 }, horizon, depth - 1, beam);
+    const sub = descend(sim, c, root, obj, depth - 1, beam);
     c.pathValue = sub.value;
     c.path = sub.steps;
   }
@@ -136,14 +144,22 @@ function lookahead(sim, bank, horizon, depth, beam) {
   return best.path;
 }
 
+// The value of a path's end node and how far ahead candidates are considered.
+function objective(horizon, deadline) {
+  if (deadline > 0) {
+    return { limit: deadline, breakEven: deadline, leaf: n => n.bank + n.spent + n.rate * (deadline - n.t) };
+  }
+  return { limit: horizon, breakEven: 2 * horizon, leaf: n => n.bank + n.rate * (horizon - n.t) + n.rate * horizon };
+}
+
 // Score every candidate at a node: wait time plus payback time.
-function rankCandidates(sim, node, horizon) {
+function rankCandidates(sim, node, obj) {
   const out = [];
   for (const item of sim.candidates()) {
     const price = sim.price(item);
     if (!(price >= 0) || !isFinite(price)) continue;
     const wait = waitFor(price, node.bank, node.rate);
-    if (node.t + wait > horizon) continue;
+    if (node.t + wait > obj.limit) continue;
     sim.apply(item);
     const rateAfter = sim.rate();
     sim.undo();
@@ -164,13 +180,13 @@ function rankCandidates(sim, node, horizon) {
 // more than the rate rose, apart from that department's own upgrades. It can
 // miss a complement (a pair or synergy partner, another department's bundle)
 // until the next upgrade purchase clears `gains`.
-function lazyTop(sim, node, horizon, gains) {
+function lazyTop(sim, node, obj, gains) {
   const list = [];
   for (const item of sim.candidates()) {
     const price = sim.price(item);
     if (!(price >= 0) || !isFinite(price)) continue;
     const wait = waitFor(price, node.bank, node.rate);
-    if (node.t + wait > horizon) continue;
+    if (node.t + wait > obj.limit) continue;
     const key = gainKey(item);
     let g = gains.get(key);
     if (!g || g.price !== price) {
@@ -215,7 +231,7 @@ function gainKey(item) {
   return item.type === 'bundle' ? key + ':' + item.parts.length : key;
 }
 
-function descend(sim, cand, node, horizon, depthLeft, beam) {
+function descend(sim, cand, node, obj, depthLeft, beam) {
   const t = node.t + cand.wait;
   const bank = node.bank + node.rate * cand.wait - cand.price;
   const step = {
@@ -225,16 +241,16 @@ function descend(sim, cand, node, horizon, depthLeft, beam) {
     gain: cand.gain,
     rateAfter: cand.rateAfter,
   };
-  const here = { t, bank, rate: cand.rateAfter };
-  const leaf = bank + here.rate * (horizon - t) + here.rate * horizon;
+  const here = { t, bank, rate: cand.rateAfter, spent: node.spent + cand.price };
+  const leaf = obj.leaf(here);
 
   if (depthLeft <= 0) return { value: leaf, steps: [step] };
 
   sim.apply(cand.item);
   try {
     let best = { value: leaf, steps: [] };
-    for (const c of rankCandidates(sim, here, horizon).slice(0, beam)) {
-      const sub = descend(sim, c, here, horizon, depthLeft - 1, beam);
+    for (const c of rankCandidates(sim, here, obj).slice(0, beam)) {
+      const sub = descend(sim, c, here, obj, depthLeft - 1, beam);
       if (better(sub.value, best.value)) best = sub;
     }
     return { value: best.value, steps: [step, ...best.steps] };
@@ -664,6 +680,48 @@ function goldenShare(s) {
   return ((1 - w) * ev.normal + w * ev.wrath) / gap;
 }
 
+// Golden report effects, best first (our estimate: meltdown ×666 for 6 s, a
+// bot storm of ~25 bots worth 1-7 min of production each, a report chain,
+// up to 15 min of production, ×7 for 77 s, ... production halved last).
+// scripts/sim/harness.mjs GOLD_RANK must match.
+const GOLD_RANK = ['meltdown', 'botFarmRaid', 'ringTakedown', 'bustedProvider', 'banWave', 'caughtOnStream', 'hotfix', 'exploitLeak', 'cheatUpdate'];
+
+// The effect a click on this golden report (chain 0) would give right now.
+// Mirrors the game's pick (`CT(wrath)`, build ClLVmN6W): clicking draws from
+// the game's own RNG `s.rng` and nothing draws before the pick, so the
+// answer is exact as long as the click is applied at once (not queued behind
+// a leaderboard check-in). Reads state only.
+function predictGolden(game, shimmer) {
+  const s = game.G.s;
+  let rng = s.rng >>> 0;
+  const C = () => {
+    rng = (rng + 1831565813) >>> 0;
+    let t = rng;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let list;
+  if (shimmer.wrath) {
+    list = ['cheatUpdate', 'bustedProvider', 'exploitLeak'];
+    if (C() < 0.3) list.push('meltdown', 'ringTakedown', 'botFarmRaid');
+    if (s.lastEffect && C() < 0.8) {
+      const i = list.indexOf(s.lastEffect);
+      if (i >= 0) list.splice(i, 1);
+    }
+  } else {
+    list = ['banWave', 'bustedProvider'];
+    if (C() < 0.1) list.push('caughtOnStream');
+    if (C() < 0.25 && game.buildings.some(b => (s.buildings[b.id]?.amount ?? 0) >= 10)) list.push('hotfix');
+    if (C() < 0.03 && s.bansEarned >= 1e5) list.push('ringTakedown', 'botFarmRaid');
+    if (s.lastEffect && list.length > 1 && C() < 0.8) {
+      const i = list.indexOf(s.lastEffect);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+  return list[Math.floor(C() * list.length)];
+}
+
 // Average income from launching every ban wave at WAVE_LAUNCH_AT: the wave
 // runs ×round(3 + 1.5 × (meter − 1)) for 30 s; 100% of meter fills in
 // 240/(1 + 0.04 × departments) s, 30% faster with the Dashboard tool.
@@ -1084,8 +1142,39 @@ function incidentCard(inc) {
 }
 
 const ROUTINES = {
-  shimmers(G) {
-    for (const el of document.querySelectorAll('#shimmers .shimmer')) {
+  shimmers(G, enabled, game) {
+    const els = document.querySelectorAll('#shimmers .shimmer');
+    const pick = enabled.goldenPick && goldenPickState.on;
+    if (pick) {
+      const off = checkGoldenPick(G);
+      if (off) return off;
+    }
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      // Golden report look-ahead: elements and G.shimmers are in the same
+      // order (both added at spawn, removed at pop or expiry).
+      const sh = pick && els.length === G.shimmers.length ? G.shimmers[i] : null;
+      if (sh && sh.type === 'golden' && sh.chain === 0 && el.classList.contains('wrath') === !!sh.wrath) {
+        if (!goldenNoticed.has(el)) {
+          if (!ready('shimmer:' + shimmerKey(el), true)) continue;
+          goldenNoticed.add(el);
+        }
+        const effect = predictGolden(game, sh);
+        // Anomaly Detection (bought before the look-ahead was on; it resets
+        // at the next sequel) pops the report itself 2.5 s after it appears.
+        let left = sh.life;
+        if (G.s.upgradesBought.has('tool:anomaly')) left = Math.min(left, Math.floor(2.5 * TICKS_PER_SEC) - (sh.maxLife - sh.life));
+        const lastChance = left <= GOLDEN_LAST_CHANCE_TICKS;
+        if (GOLD_RANK.indexOf(effect) > GOLDEN_TAKE_RANK && !(lastChance && !GOLDEN_NEVER.has(effect))) continue;
+        const before = G.s.eventsClicked;
+        if (!pointerDown(el)) return null;
+        goldenPickState.pending = { effect, clicked: before };
+        goldenPickState.picks++;
+        // Applied at once unless queued behind a check-in; check now, before
+        // another click (or Anomaly Detection) overwrites lastEffect.
+        if (G.s.eventsClicked > goldenPickState.pending.clicked) return checkGoldenPick(G) ?? `golden ${effect}`;
+        return `golden ${effect}`;
+      }
       if (ready('shimmer:' + shimmerKey(el), true)) {
         // Shimmers listen for pointerdown only.
         if (!pointerDown(el)) return null;
@@ -1733,6 +1822,42 @@ function projectedHeat(G, enabled) {
   return 100 * innocentShare * scrub * HEAT_WORST_ROLL * (1.3 - 0.6 * t.cred / 100);
 }
 
+// Golden report look-ahead (panel toggle ops.goldenPick, off by default):
+// a detectability choice like Anti anti-cheat. Click when the
+// predicted effect (predictGolden in src/game.js) ranks in GOLD_RANK's top
+// GOLDEN_TAKE_RANK + 1, or in the report's last 2 s anything but the two bad
+// ones (a report may expire instead; that costs nothing). The RNG moves on
+// most ticks, so each 400 ms poll is a fresh pick. Sim ceiling (best of 10
+// picks): fresh run to the cap 43.7 -> 12.6 game hours. This look-ahead
+// (seeds 7-13): 39.3 -> 12.2 game hours, faster on 7 of 7, 0 mismatches.
+const GOLDEN_TAKE_RANK = 2; // meltdown, botFarmRaid, ringTakedown
+const GOLDEN_LAST_CHANCE_TICKS = 2 * TICKS_PER_SEC;
+const GOLDEN_NEVER = new Set(['exploitLeak', 'cheatUpdate']);
+const goldenNoticed = new WeakSet();
+// Self-check: each click's prediction against the effect the game applied.
+// A changed build, or a click queued behind a leaderboard check-in (applied
+// after the server's reseed), shows up as mismatches; 3 in the last 20
+// turn the look-ahead off for the session.
+const goldenPickState = { on: true, pending: null, results: [], picks: 0, mismatches: 0 };
+// For the panel and the stats export.
+function goldenPickStatus(G) {
+  const { on, picks, mismatches, results } = goldenPickState;
+  return { on, picks, mismatches, recentMisses: results.filter(ok => !ok).length, recent: results.length,
+    anomaly: G.s.upgradesBought.has('tool:anomaly') };
+}
+function checkGoldenPick(G) {
+  const p = goldenPickState.pending;
+  if (!p || G.s.eventsClicked <= p.clicked) return null;
+  goldenPickState.pending = null;
+  const r = goldenPickState.results;
+  r.push(G.s.lastEffect === p.effect);
+  if (G.s.lastEffect !== p.effect) goldenPickState.mismatches++;
+  if (r.length > 20) r.shift();
+  if (r.filter(ok => !ok).length < 3) return G.s.lastEffect === p.effect ? null : `golden mismatch ${p.effect} got ${G.s.lastEffect}`;
+  goldenPickState.on = false;
+  return 'golden prediction off (3 mismatches)';
+}
+
 let shimmerSeq = 0;
 const shimmerIds = new WeakMap();
 function shimmerKey(el) {
@@ -1945,8 +2070,9 @@ async function createStats() {
       return data.snapshots;
     },
 
-    exportJson() {
-      return JSON.stringify(data);
+    // extra: live session state from other modules (e.g. golden picks).
+    exportJson(extra = {}) {
+      return JSON.stringify({ ...data, ...extra });
     },
 
     reset() {
@@ -2046,6 +2172,7 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
       <div class="content muted">Binding to game…</div>
       <details class="ops"><summary>Automation (runs while AUTO is on)</summary>
         <label class="stealth" title="Only click what a person could (nothing under a pop-up or off screen), with human reaction delays and hammer pacing. Off: instant reactions and a steady 14 clicks/s hammer."><input type="checkbox" data-flag="stealth"> <b>Anti anti-cheat</b> (human-like clicking)</label>
+        <label class="stealth" title="Predicts each golden report's effect from the game's own RNG and clicks only when the roll is good (meltdown, bot storm, report chain), or anything harmless in its last 2 s. Sim, fresh run to the cap: 39 h to 12 h. A pattern of only good rolls is easy for the developer to spot."><input type="checkbox" data-op="goldenPick"> <b>Golden picks</b> (click when the roll is good)</label>
         ${OPS.filter(o => !o.experiment).map(o => `<label><input type="checkbox" data-op="${o.key}"> ${esc(o.label)}</label>`).join('')}
         <div class="opsLog"></div>
       </details>
@@ -2280,7 +2407,10 @@ async function autoBuy(game, path, utilities = [], ops = {}) {
     reserve = auditReserve(game.G, ops);
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
-    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
+    // Anomaly Detection pops golden reports itself 2.5 s after they appear,
+    // which takes the pick away from the golden look-ahead (ops.goldenPick).
+    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps &&
+      !(ops.goldenPick && u.def.id === 'tool:anomaly'));
     if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
     // The buy-now prefix is bought this cycle in any order, so identical
     // buildings in it are grouped into bulk clicks.
@@ -2461,7 +2591,7 @@ async function start() {
   const ui = createOverlay({
     onChange: () => tick(),
     onRefresh: () => rebind(),
-    onCopyStats: () => navigator.clipboard.writeText(stats.exportJson()),
+    onCopyStats: () => navigator.clipboard.writeText(stats.exportJson(game ? { goldenPick: goldenPickStatus(game.G) } : {})),
     onResetStats: () => stats.reset(),
   });
   bindInputSettings(() => ui.settings);
@@ -2532,7 +2662,7 @@ async function start() {
       loopHealth.maxGapMs = 0;
       loopHealth.hiddenSeen = false;
     }
-    ui.renderStats(statsHtml(stats.summary()));
+    ui.renderStats(statsHtml(stats.summary()) + goldenStatusHtml(game, ui.settings));
   }, STATS_MS);
 }
 
@@ -2549,6 +2679,33 @@ function statsHtml(sum) {
   return html;
 }
 
+// Golden picks (ops.goldenPick) status, under Last wave in Stats.
+function goldenStatusHtml(game, settings) {
+  if (!settings.ops.goldenPick) return '';
+  const g = goldenPickStatus(game.G);
+  if (!g.on) return `<div>Golden picks: off · ${g.picks} picks, ${g.mismatches} mismatches</div>`;
+  let html = `<div>Golden picks: on · ${g.picks} picks, ${g.mismatches} mismatches</div>`;
+  if (g.anomaly) html += '<div class="muted">Golden picks limited until next sequel (Anomaly Detection pops reports after 2.5 s)</div>';
+  return html;
+}
+
+// Hidden experiment flag `deadline`: plan for bans earned by the next ship or
+// the cap, whichever comes first (see plan() in src/planner.js). The ETA comes
+// from the last 30 minutes' growth trend (usually early, so the planner errs
+// short); until there is one, 2 × the horizon, the old break-even.
+const MIN_DEADLINE_S = 60;
+function planDeadline(game, settings, stats) {
+  const seq = sequelStatus(game.G, settings.ops, game.cap);
+  if (seq.ship) return MIN_DEADLINE_S;
+  let target = seq.target?.bansAllTime ?? null;
+  if (seq.endgame && seq.endgame.bestAt > game.G.s.bansAllTime) target = seq.endgame.bestAt;
+  if (game.cap && !(target < game.cap)) target = game.cap;
+  if (!target) return 2 * settings.horizon;
+  const etaMs = trendEta(stats.snapshots(), target, Date.now());
+  if (etaMs === null || etaMs === Infinity) return 2 * settings.horizon;
+  return Math.max(MIN_DEADLINE_S, etaMs / 1000);
+}
+
 function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
@@ -2556,8 +2713,9 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
+  const deadline = settings.deadline ? planDeadline(game, settings, stats) : null;
   const result = withSandbox(game, { clicksPerSec }, sim =>
-    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
+    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam, deadline }));
   const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
@@ -2651,8 +2809,13 @@ function render(game, ui, autoBought, stats) {
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
+  if (deadline) status += `<div>Planning to: ${fmtTime(deadline)} (next ship or cap)</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
+  if (settings.ops.goldenPick) {
+    const g = goldenPickStatus(game.G);
+    if (!g.on) html += `<div class="err">Golden picks: OFF, ${g.recentMisses} of the last ${g.recent} predictions missed. Ask for a re-check.</div>`;
+  }
   if (game.build !== ANALYZED_BUILD) {
     html += `<div class="err">Game updated: automation rules were checked against ${esc(ANALYZED_BUILD)}, live is ${esc(game.build)}. Ask for a re-check.</div>`;
   }

@@ -3,6 +3,7 @@
 // Usage: node scripts/sim/experiments.mjs [minutes] [seeds] [set]
 // Edit CONFIG_SETS below to change what's compared; [set] picks one (default: first).
 import { spawn } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { renderProgress } from './progress.mjs';
 
@@ -18,12 +19,55 @@ const CONFIG_SETS = {
     base: [],
   },
   // Fresh run to the 5e37 cap: endgame ship rule (src/planner.js
-  // endgameShip) and planner horizon, against the current bot.
+  // endgameShip) and planner horizon 4h, against the current bot. Run with
+  // 7+ seeds: the same seed and config can differ by 9 h. Seeds 7-13: base
+  // 40.2 / endgame 38.9 / h4h 40.8 game hours, no consistent winner.
   freshEndgame: {
     base: [],
     endgame: ['--set', 'ops.sequelEndgame=true'],
-    h15m: ['--set', 'horizon=900'],
     h4h: ['--set', 'horizon=14400'],
+  },
+  // Fresh run to the 5e37 cap: the planner's deadline objective (bans earned
+  // by the next ship or the cap; `deadline` in src/main.js), alone and with
+  // the endgame ship rule, against the current bot. 7+ seeds. Seeds 7-13:
+  // base 40.6 / deadline 39.8 / deadlineEndgame 45.9 game hours; deadline
+  // beat base on 4 of 7 (noise), deadlineEndgame lost on 6 of 7.
+  freshDeadline: {
+    base: [],
+    deadline: ['--set', 'deadline=true'],
+    deadlineEndgame: ['--set', 'deadline=true', '--set', 'ops.sequelEndgame=true'],
+  },
+  // Fresh run to the 5e37 cap: ceiling for an RNG look-ahead on the golden
+  // report effect pick (harness.mjs RIGS, GOLD_RANK). Seeds 7-13: base 43.7 /
+  // gold10 12.6 / goldBest 12.9 game hours, faster on 7 of 7 seeds.
+  freshGold: {
+    base: [],
+    gold10: ['--rig', 'gold10'],
+    goldBest: ['--rig', 'goldBest'],
+  },
+  // Fresh run to the 5e37 cap: the bot's golden report look-ahead
+  // (ops.goldenPick, predictGolden in src/game.js) against the current bot.
+  freshGoldPick: {
+    base: [],
+    goldenPick: ['--set', 'ops.goldenPick=true'],
+  },
+  // Fresh run to the 5e37 cap: more seeds for base vs the deadline objective
+  // (freshDeadline's gap was within noise). Seeds 29-43: base 42.1 /
+  // deadline 39.3, deadline faster on 10 of 15. Seeds 14-28 of freshDeadline
+  // went the other way (39.6 / 41.3 / deadlineEndgame 40.6). Pooled over 37
+  // seeds: 40.8 vs 40.2, no measurable effect.
+  freshConfirm: {
+    base: [],
+    deadline: ['--set', 'deadline=true'],
+  },
+  // Fresh run to the 5e37 cap: ceiling for an RNG look-ahead on the wave heat
+  // roll (harness.mjs RIGS). wave10 = best of 10 draws, wave0 = best roll.
+  // Seeds 7-13: base 36.4 / wave10 41.3 / wave0 38.9 game hours. A perfect
+  // roll does not reach the cap sooner: no RNG look-ahead for waves.
+  freshRig: {
+    base: [],
+    wave10: ['--rig', 'wave10'],
+    wave0: ['--rig', 'wave0'],
   },
   // Fresh run to the 5e37 cap: sequel ship ratio sweep. Seeds 7-11, game
   // hours to cap: ×1.5 46.0 / ×2 35.5 / ×3 48.4 / ×4 44.5.
@@ -116,8 +160,20 @@ function runOne(name, seed, extra) {
 }
 
 await mkdir('research/sim-runs', { recursive: true });
-const jobs = [];
-for (const seed of seeds) for (const [name, extra] of Object.entries(CONFIGS)) jobs.push(runOne(name, seed, extra));
+// At most (cores - 2) runs at once so the machine stays usable (user request,
+// 2026-10-23); the rest wait in a queue.
+const MAX_PARALLEL = Math.max(1, availableParallelism() - 2);
+const queue = [];
+for (const seed of seeds) for (const [name, extra] of Object.entries(CONFIGS)) queue.push([name, seed, extra]);
+const done = new Array(queue.length);
+let nextJob = 0;
+async function worker() {
+  while (nextJob < queue.length) {
+    const i = nextJob++;
+    done[i] = await runOne(...queue[i]);
+  }
+}
+const jobs = Array.from({ length: Math.min(MAX_PARALLEL, queue.length) }, worker);
 
 const tty = process.stdout.isTTY;
 let drawnLines = 0;
@@ -129,7 +185,8 @@ const tick = setInterval(async () => {
   process.stdout.write(text + '\n');
   drawnLines = text.split('\n').length;
 }, 2000);
-const results = await Promise.all(jobs);
+await Promise.all(jobs);
+const results = done;
 clearInterval(tick);
 await writeFile('research/sim-runs/progress.json', JSON.stringify(progress));
 

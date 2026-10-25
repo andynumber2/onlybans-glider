@@ -17,6 +17,12 @@
 // Objective: maximize  bank(H) + rate(H) * H.
 // The tail term values production for one more horizon, so a purchase is worth
 // making when it pays back within roughly (2H - time until affordable).
+//
+// With `deadline` (seconds) the objective is instead the bans earned by then:
+// earned(D) = bank + spent + rate * (D - t) at a path's end. All-time bans are
+// what sequel stars and the cap count, and neither the bank nor buildings
+// survive a ship, so D is the time to the next ship or the cap (main.js).
+// Spending is free in this objective; it only costs the purchases it delays.
 
 // Cap on purchases made in the "spend now" phase, to bound planning time.
 const MAX_NOW_BUYS = 100;
@@ -25,14 +31,15 @@ const MAX_NOW_BUYS = 100;
 // rank first (lazyTop) instead of every candidate. From the 2026-10-19 save,
 // 120 game-minutes, seeds 7-18: 6x fewer calculateGains calls per replan, and
 // 36.142 vs 36.143 log10 bans (5 better, 6 worse, 1 tie). false is for tests.
-export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
+export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true, deadline = null }) {
+  const obj = objective(horizon, deadline);
   const rateStart = sim.rate();
-  const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, horizon);
+  const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, obj);
   const gains = new Map();
   for (const c of ranked) gains.set(gainKey(c.item), gainEntry(c.item, c.price, c.gain, rateStart));
 
   // Phase 1: while the best-scoring item is affordable now and pays back
-  // within the objective's break-even (2H), buy it. Late game this can be
+  // within the objective's break-even (2H, or the deadline), buy it. Late game this can be
   // dozens of purchases, which a depth-limited search would never reach.
   // A bundle that isn't affordable yet is still worth working toward: buy its
   // next part now if that part is affordable (the rest stays ranked next time).
@@ -42,7 +49,7 @@ export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
   let rateNow = rateStart;
   try {
     let top = ranked[0];
-    while (top && top.payback < 2 * horizon && nowSteps.length < MAX_NOW_BUYS) {
+    while (top && top.payback < obj.breakEven && nowSteps.length < MAX_NOW_BUYS) {
       let parts = [top.item];
       if (top.item.type === 'bundle') parts = top.wait === 0 ? top.item.parts : top.item.parts.slice(0, 1);
       else if (top.wait > 0) break;
@@ -74,12 +81,12 @@ export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
           if (grown.has(g.building)) gains.delete(key);
           else g.fresh = false;
         }
-        top = lazyTop(sim, node, horizon, gains);
+        top = lazyTop(sim, node, obj, gains);
       } else {
-        top = rankCandidates(sim, node, horizon)[0];
+        top = rankCandidates(sim, node, obj)[0];
       }
     }
-    const ahead = lookahead(sim, nowBank, horizon, depth, beam);
+    const ahead = lookahead(sim, nowBank, obj, depth, beam);
     return { rate: rateStart, path: [...nowSteps, ...ahead.flatMap(expandStep)], candidates: ranked };
   } finally {
     for (let i = 0; i < applied; i++) sim.undo();
@@ -99,13 +106,14 @@ function expandStep(step) {
 }
 
 // Phase 2: depth-limited search over future purchases from the current state.
-function lookahead(sim, bank, horizon, depth, beam) {
+function lookahead(sim, bank, obj, depth, beam) {
   const rate0 = sim.rate();
-  const holdValue = bank + rate0 * horizon * 2;
-  const ranked = rankCandidates(sim, { t: 0, bank, rate: rate0 }, horizon);
+  const root = { t: 0, bank, rate: rate0, spent: 0 };
+  const holdValue = obj.leaf(root);
+  const ranked = rankCandidates(sim, root, obj);
 
   for (const c of ranked.slice(0, beam)) {
-    const sub = descend(sim, c, { t: 0, bank, rate: rate0 }, horizon, depth - 1, beam);
+    const sub = descend(sim, c, root, obj, depth - 1, beam);
     c.pathValue = sub.value;
     c.path = sub.steps;
   }
@@ -119,14 +127,22 @@ function lookahead(sim, bank, horizon, depth, beam) {
   return best.path;
 }
 
+// The value of a path's end node and how far ahead candidates are considered.
+function objective(horizon, deadline) {
+  if (deadline > 0) {
+    return { limit: deadline, breakEven: deadline, leaf: n => n.bank + n.spent + n.rate * (deadline - n.t) };
+  }
+  return { limit: horizon, breakEven: 2 * horizon, leaf: n => n.bank + n.rate * (horizon - n.t) + n.rate * horizon };
+}
+
 // Score every candidate at a node: wait time plus payback time.
-function rankCandidates(sim, node, horizon) {
+function rankCandidates(sim, node, obj) {
   const out = [];
   for (const item of sim.candidates()) {
     const price = sim.price(item);
     if (!(price >= 0) || !isFinite(price)) continue;
     const wait = waitFor(price, node.bank, node.rate);
-    if (node.t + wait > horizon) continue;
+    if (node.t + wait > obj.limit) continue;
     sim.apply(item);
     const rateAfter = sim.rate();
     sim.undo();
@@ -147,13 +163,13 @@ function rankCandidates(sim, node, horizon) {
 // more than the rate rose, apart from that department's own upgrades. It can
 // miss a complement (a pair or synergy partner, another department's bundle)
 // until the next upgrade purchase clears `gains`.
-function lazyTop(sim, node, horizon, gains) {
+function lazyTop(sim, node, obj, gains) {
   const list = [];
   for (const item of sim.candidates()) {
     const price = sim.price(item);
     if (!(price >= 0) || !isFinite(price)) continue;
     const wait = waitFor(price, node.bank, node.rate);
-    if (node.t + wait > horizon) continue;
+    if (node.t + wait > obj.limit) continue;
     const key = gainKey(item);
     let g = gains.get(key);
     if (!g || g.price !== price) {
@@ -198,7 +214,7 @@ function gainKey(item) {
   return item.type === 'bundle' ? key + ':' + item.parts.length : key;
 }
 
-function descend(sim, cand, node, horizon, depthLeft, beam) {
+function descend(sim, cand, node, obj, depthLeft, beam) {
   const t = node.t + cand.wait;
   const bank = node.bank + node.rate * cand.wait - cand.price;
   const step = {
@@ -208,16 +224,16 @@ function descend(sim, cand, node, horizon, depthLeft, beam) {
     gain: cand.gain,
     rateAfter: cand.rateAfter,
   };
-  const here = { t, bank, rate: cand.rateAfter };
-  const leaf = bank + here.rate * (horizon - t) + here.rate * horizon;
+  const here = { t, bank, rate: cand.rateAfter, spent: node.spent + cand.price };
+  const leaf = obj.leaf(here);
 
   if (depthLeft <= 0) return { value: leaf, steps: [step] };
 
   sim.apply(cand.item);
   try {
     let best = { value: leaf, steps: [] };
-    for (const c of rankCandidates(sim, here, horizon).slice(0, beam)) {
-      const sub = descend(sim, c, here, horizon, depthLeft - 1, beam);
+    for (const c of rankCandidates(sim, here, obj).slice(0, beam)) {
+      const sub = descend(sim, c, here, obj, depthLeft - 1, beam);
       if (better(sub.value, best.value)) best = sub;
     }
     return { value: best.value, steps: [step, ...best.steps] };

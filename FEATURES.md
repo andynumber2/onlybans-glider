@@ -137,7 +137,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | `upgradeKind:pair` | Department pairs | ✅ | Planner. |
 | `upgradeKind:playbook` | Playbooks | ✅ | Planner (global multiplier). |
 | `upgradeKind:trust` | Community Trust | ✅ | Planner once trust unlocks them. |
-| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share. |
+| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share. Panel toggle Golden picks (off by default) predicts each report's effect from `s.rng` and clicks only good rolls (sim: 39 h to 12 h to the cap). |
 | `upgradeKind:tool` | Log Analyst tools | ✅ | See Tools. |
 | `upgradeKind:escalation` | Escalations | ✅ | Buy all three at ≤15 min of income. |
 | `upgradeKind:truce` | Truce | ✅ | Only when perception ≥80. |
@@ -152,7 +152,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | `tool:agi` | AGI | ✅ | Planner (Log Analysts ×10, Neural Nets ×3). |
 | `tool:notebook` | Jupyter notebook | ✅ | Utility rule; minor audit/dupe help. |
 | `tool:dashboard` | Dashboard | ✅ | Valued via wave share (waves fill 30% faster). |
-| `tool:anomaly` | Anomaly detection | ✅ | Utility rule; redundant with our golden clicking. |
+| `tool:anomaly` | Anomaly detection | ✅ | Utility rule; redundant with our golden clicking. Skipped while Golden picks is on (it pops reports after 2.5 s, taking the pick away). |
 | `tool:copilot` | LLM copilot | ✅ | Utility rule; redundant with our incident handling. |
 | `tool:agent` | Agentic AI | ✅ | Utility rule. It auto-launches at 200%, before our 267%, when its conditions allow (read from code); it launched about half of waves in simulation with no measurable cost vs skipping it. |
 

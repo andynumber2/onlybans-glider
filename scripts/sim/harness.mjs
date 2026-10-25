@@ -10,6 +10,11 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { performance as realPerf } from 'node:perf_hooks';
 import { createRequire } from 'node:module';
+import { setPriority } from 'node:os';
+
+// Every sim runs at the lowest CPU priority so the machine stays usable
+// (user request, 2026-10-23). Same as `nice -n 19`; results are unaffected.
+setPriority(19);
 
 const idlUtils = createRequire(import.meta.url)('jsdom/lib/jsdom/living/generated/utils.js');
 const SITE = resolve('research/site');
@@ -145,7 +150,33 @@ function hookDispatcher(src) {
 // loop only draws, but it is the largest CPU cost, so 50 ms runs about 30%
 // faster; the game's DOM (button states, pop-ups) then refreshes less often.
 // 50 vs 16 showed no consistent score difference (2026-10-19, 6 seeds).
-export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null, rafMs = 50 } = {}) {
+// Rigged rolls, for measuring the most an RNG look-ahead could gain (sim only).
+// The wave heat roll is `.7+.6*C()` (lower heat = better verdict tier).
+// wave10: best of 10 draws, about what waiting a few ticks for a good roll
+// gives. wave0: always the best roll.
+// Golden report effect pick (`CT(wrath)`, run on each click): the best of K
+// independent picks by GOLD_RANK, our estimate of value (meltdown ×666 for
+// 6 s, a bot storm of ~25 bots worth 1-7 min of production each, a report
+// chain, up to 15 min of production, ×7 for 77 s, ... the halving last).
+// gold10 is about what waiting a few ticks to click gives; goldBest ~ perfect.
+// Must match GOLD_RANK in src/game.js (the bot's golden look-ahead).
+const GOLD_RANK = ['meltdown', 'botFarmRaid', 'ringTakedown', 'bustedProvider', 'banWave', 'caughtOnStream', 'hotfix', 'exploitLeak', 'cheatUpdate'];
+const goldRig = k => ['function CT(e){',
+  `function CT(e){let rigBest=null,rigRank=1e9;for(let rigK=0;rigK<${k};rigK++){const rigX=rigCT0(e),rigQ=${JSON.stringify(GOLD_RANK)}.indexOf(rigX);if(rigQ<rigRank){rigRank=rigQ;rigBest=rigX}}return rigBest}function rigCT0(e){`];
+const RIGS = {
+  wave10: ['.7+.6*C()', '.7+.6*Math.min(C(),C(),C(),C(),C(),C(),C(),C(),C(),C())'],
+  wave0: ['.7+.6*C()', '.7'],
+  gold10: goldRig(10),
+  goldBest: goldRig(1000),
+};
+function rigBundle(src, rig) {
+  const [from, to] = RIGS[rig] ?? [];
+  if (!from) throw new Error(`unknown rig ${rig}; have ${Object.keys(RIGS).join(', ')}`);
+  if (src.split(from).length !== 2) throw new Error(`rig ${rig}: expected exactly one ${from} in the bundle`);
+  return src.replace(from, to);
+}
+
+export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null, rafMs = 50, rig = null } = {}) {
   if (startMs === null) {
     startMs = Date.UTC(2026, 9, 15);
     if (save) startMs = JSON.parse(save).lastSave + 1000;
@@ -158,9 +189,13 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   // name so parallel plain runs never load it.
   await mkdir(resolve(SITE, 'assets'), { recursive: true });
   let assetPath = resolve(SITE, 'assets', bundleName);
-  if (hookActions) {
-    assetPath = resolve(SITE, 'assets', bundleName.replace(/\.js$/, '-hook.js'));
-    await writeFile(assetPath, hookDispatcher(await readFile(resolve(SITE, bundleName), 'utf8')));
+  if (hookActions || rig) {
+    const suffix = [hookActions ? 'hook' : null, rig ? `rig-${rig}` : null].filter(Boolean).join('-');
+    assetPath = resolve(SITE, 'assets', bundleName.replace(/\.js$/, `-${suffix}.js`));
+    let src = await readFile(resolve(SITE, bundleName), 'utf8');
+    if (hookActions) src = hookDispatcher(src);
+    if (rig) src = rigBundle(src, rig);
+    await writeFile(assetPath, src);
   } else {
     await copyFile(resolve(SITE, bundleName), assetPath);
   }

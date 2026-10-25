@@ -210,6 +210,48 @@ export function goldenShare(s) {
   return ((1 - w) * ev.normal + w * ev.wrath) / gap;
 }
 
+// Golden report effects, best first (our estimate: meltdown ×666 for 6 s, a
+// bot storm of ~25 bots worth 1-7 min of production each, a report chain,
+// up to 15 min of production, ×7 for 77 s, ... production halved last).
+// scripts/sim/harness.mjs GOLD_RANK must match.
+export const GOLD_RANK = ['meltdown', 'botFarmRaid', 'ringTakedown', 'bustedProvider', 'banWave', 'caughtOnStream', 'hotfix', 'exploitLeak', 'cheatUpdate'];
+
+// The effect a click on this golden report (chain 0) would give right now.
+// Mirrors the game's pick (`CT(wrath)`, build ClLVmN6W): clicking draws from
+// the game's own RNG `s.rng` and nothing draws before the pick, so the
+// answer is exact as long as the click is applied at once (not queued behind
+// a leaderboard check-in). Reads state only.
+export function predictGolden(game, shimmer) {
+  const s = game.G.s;
+  let rng = s.rng >>> 0;
+  const C = () => {
+    rng = (rng + 1831565813) >>> 0;
+    let t = rng;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let list;
+  if (shimmer.wrath) {
+    list = ['cheatUpdate', 'bustedProvider', 'exploitLeak'];
+    if (C() < 0.3) list.push('meltdown', 'ringTakedown', 'botFarmRaid');
+    if (s.lastEffect && C() < 0.8) {
+      const i = list.indexOf(s.lastEffect);
+      if (i >= 0) list.splice(i, 1);
+    }
+  } else {
+    list = ['banWave', 'bustedProvider'];
+    if (C() < 0.1) list.push('caughtOnStream');
+    if (C() < 0.25 && game.buildings.some(b => (s.buildings[b.id]?.amount ?? 0) >= 10)) list.push('hotfix');
+    if (C() < 0.03 && s.bansEarned >= 1e5) list.push('ringTakedown', 'botFarmRaid');
+    if (s.lastEffect && list.length > 1 && C() < 0.8) {
+      const i = list.indexOf(s.lastEffect);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+  return list[Math.floor(C() * list.length)];
+}
+
 // Average income from launching every ban wave at WAVE_LAUNCH_AT: the wave
 // runs ×round(3 + 1.5 × (meter − 1)) for 30 s; 100% of meter fills in
 // 240/(1 + 0.04 × departments) s, 30% faster with the Dashboard tool.

@@ -44,7 +44,10 @@ export async function autoBuy(game, path, utilities = [], ops = {}) {
     reserve = auditReserve(game.G, ops);
     const arms = armsRacePick(game);
     if (arms && !game.G.ascending && clickUpgrade(game, arms)) return 1;
-    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps);
+    // Anomaly Detection pops golden reports itself 2.5 s after they appear,
+    // which takes the pick away from the golden look-ahead (ops.goldenPick).
+    const util = utilities.find(u => canAfford(game, u.price) && u.price <= UTILITY_MAX_SECONDS * game.G.bps &&
+      !(ops.goldenPick && u.def.id === 'tool:anomaly'));
     if (util && !game.G.ascending && clickUpgrade(game, util.def)) return 1;
     // The buy-now prefix is bought this cycle in any order, so identical
     // buildings in it are grouped into bulk clicks.

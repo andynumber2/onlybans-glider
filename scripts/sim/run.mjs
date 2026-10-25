@@ -6,6 +6,7 @@
 //   --bundle index-X.js         run an older game build from research/site/
 //   --save FILE                 start from a game save (localStorage `click2ban-save` text)
 //   --raf MS                    animation frame period (default 50; 16 = browser's 60 fps)
+//   --rig NAME                  rig a game roll (harness.mjs RIGS; sim-only ceiling tests)
 //   --record FILE               save every game action (with its tick and the
 //                               game's RNG state) for scripts/sim/replay.mjs
 // Prints a JSON summary on the last line for scripting.
@@ -22,6 +23,7 @@ for (let i = 0; i < args.length; i += 2) {
   else if (k === 'record') opt.record = args[i + 1];
   else if (k === 'bundle') opt.bundle = args[i + 1];
   else if (k === 'save') opt.save = args[i + 1];
+  else if (k === 'rig') opt.rig = args[i + 1];
   else opt[k] = Number(args[i + 1]);
 }
 
@@ -41,7 +43,7 @@ for (const kv of opt.set) {
 
 const wall0 = realPerf.now();
 const save = opt.save ? (await readFile(opt.save, 'utf8')).trim() : null;
-const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save, rafMs: opt.raf ?? 50 });
+const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save, rafMs: opt.raf ?? 50, rig: opt.rig ?? null });
 // Every action the game applies, as the server would receive it: tick, the
 // action, and the RNG state and all-time bans just before it was applied.
 const recorded = [];
@@ -82,7 +84,30 @@ let lastLogTop = '';
 // Game seconds from the start of this run until all-time bans hit the 1e38
 // cap (`s.capped`); the run stops there.
 let capSeconds = null;
+// Stalls: game seconds where the bank holds more than 30 minutes of
+// production, by the buyer's stop reason (digits stripped) and by sequel
+// number, so we can see whether the bot sits on money it could spend.
+const STALL_BANK_S = 1800;
+const stalls = { seconds: 0, byReason: {}, bySequel: {}, episodes: [] };
+let stallEpisode = null;
 await sim.run(opt.minutes * 60, s => {
+  const bankSeconds = G.s.bans / Math.max(1, G.bps);
+  if (bankSeconds > STALL_BANK_S) {
+    const autoLine = [...sim.window.document.querySelectorAll('#obh div')].find(d => d.textContent.startsWith('Auto: '));
+    const stop = autoLine?.textContent.split(' · ')[1] ?? '?';
+    const reason = stop.replace(/[\d.]+/g, '#').trim().slice(0, 40);
+    const seq = G.s.prestige.sequels;
+    stalls.seconds++;
+    stalls.byReason[reason] = (stalls.byReason[reason] ?? 0) + 1;
+    stalls.bySequel[seq] = (stalls.bySequel[seq] ?? 0) + 1;
+    if (!stallEpisode) stallEpisode = { start: s, end: s, seq, maxBankMin: 0, reason };
+    stallEpisode.end = s;
+    stallEpisode.maxBankMin = Math.max(stallEpisode.maxBankMin, Math.round(bankSeconds / 60));
+  } else if (stallEpisode) {
+    if (stallEpisode.end - stallEpisode.start >= 60) stalls.episodes.push(stallEpisode);
+    stallEpisode = null;
+  }
+
   const top = sim.window.document.querySelector('#obh .opsLog')?.firstElementChild?.textContent ?? '';
   if (top && top !== lastLogTop) {
     lastLogTop = top;
@@ -122,6 +147,8 @@ await sim.run(opt.minutes * 60, s => {
   }
 });
 
+if (stallEpisode && stallEpisode.end - stallEpisode.start >= 60) stalls.episodes.push(stallEpisode);
+
 if (process.env.SIM_DEBUG) {
   const panel = sim.window.document.querySelector('#obh');
   console.log('panel:', panel ? panel.textContent.replace(/\s+/g, ' ').slice(0, 1200) : 'MISSING');
@@ -153,11 +180,13 @@ const summary = {
   agentOwned: G.s.upgradesBought.has("tool:agent"),
   rateChecks,
   capSeconds,
+  stalls,
   wallSeconds: Math.round((realPerf.now() - wall0) / 1000),
 };
 if (opt.record) {
   const { writeFile } = await import('node:fs/promises');
   await writeFile(opt.record, JSON.stringify({ seed: opt.seed, minutes: opt.minutes, save: opt.save ?? null, endT: G.T, endRng: G.s.rng, endAll: G.s.bansAllTime, actions: recorded }));
 }
-console.log(JSON.stringify(summary));
-process.exit(0);
+// Exit only once the summary is flushed: process.exit() right after a write
+// to a pipe cuts it at the 64 KB pipe buffer.
+process.stdout.write(JSON.stringify(summary) + '\n', () => process.exit(0));
