@@ -4,7 +4,7 @@ Tampermonkey userscript for https://onlybans.wtf. It plans the most efficient pu
 
 Every action is a click on the game's DOM, so it goes through the game's input recorder and replays on the server like a human's input. The script never calls game logic to change state.
 
-BanGlider was World First to the 5e37 cap (Full Enforcement) on 2026-10-23: 3 days 8 hours of play, 9 sequels, server verified.
+BanGlider was World First to the 5e37 cap (Full Enforcement) on 2026-10-23: 3 days 8 hours of play, 9 sequels, server verified. On 2026-10-25, OnlyTAS ran a fresh game to the cap in 2 hours 58 minutes with 7 sequels, server verified ([certificate](research/full-enforcement-2026-10-25.png)).
 
 ![Certificate of Total Enforcement awarded to BanGlider](research/full-enforcement-2026-10-23.png)
 
