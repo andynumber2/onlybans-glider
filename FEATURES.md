@@ -137,7 +137,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | `upgradeKind:pair` | Department pairs | ✅ | Planner. |
 | `upgradeKind:playbook` | Playbooks | ✅ | Planner (global multiplier). |
 | `upgradeKind:trust` | Community Trust | ✅ | Planner once trust unlocks them. |
-| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share. Panel toggle Golden picks (off by default) predicts each report's effect from `s.rng` and clicks only good rolls; with two reports up (or a Mustache Bin evader held at 1 hp) it chains a bot storm or report chain into a meltdown (sim: 39 h to 12 h to 8.6 h to the cap). |
+| `upgradeKind:event` | Golden report upgrades | ✅ | Valued via golden-report income share (×100 while Golden picks work: fresh to cap 5.8 vs 6.4 h). Panel toggle Golden picks (off by default) predicts each report's effect from `s.rng` and clicks only good rolls; with two reports up (or a Mustache Bin evader held at 1 hp) it chains a bot storm or report chain into a meltdown (sim: 39 h to 12 h to 8.6 h to the cap). |
 | `upgradeKind:tool` | Log Analyst tools | ✅ | See Tools. |
 | `upgradeKind:escalation` | Escalations | ✅ | Buy all three at ≤15 min of income. |
 | `upgradeKind:truce` | Truce | ✅ | Only when perception ≥80. |

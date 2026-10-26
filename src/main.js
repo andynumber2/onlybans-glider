@@ -132,7 +132,7 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
-  const goldenScale = settings.ops.goldenPick ? (settings.goldenEvScale ?? 1) : 1;
+  const goldenScale = goldenPicksOn(settings.ops) ? (settings.goldenEvScale ?? GOLDEN_EV_SCALE_PICKS) : 1;
   const result = withSandbox(game, { clicksPerSec, goldenScale }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;

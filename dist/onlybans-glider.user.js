@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.27.2
+// @version      0.28.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-ClLVmN6W.js';
-const VERSION = '0.27.2';
+const VERSION = '0.28.0';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -633,9 +633,12 @@ const GOLDEN_GAP_SECONDS = 446.6;
 const GOLDEN_EV = { normal: 455, wrath: 721 };
 const GOLDEN_EV_LONG_BUFFS = { normal: 707, wrath: 1267 };
 
-// Hidden setting goldenEvScale (only with Golden picks): multiplies this share
-// in the planner's rate, since picks plus the meltdown chain make a report
-// worth far more than these all-clicked estimates (sim sweep, CLAUDE.md).
+// With Golden picks working, the planner multiplies this share by
+// GOLDEN_EV_SCALE_PICKS (hidden setting goldenEvScale overrides it), since
+// picks plus the meltdown chain make a report worth far more than these
+// all-clicked estimates. Sim (fresh to 5e37, ship at ×6, seeds 7-27): ×100
+// 5.81 vs ×1 6.42 game hours, faster on 17 of 21.
+const GOLDEN_EV_SCALE_PICKS = 100;
 function goldenShare(s) {
   const owns = id => s.upgradesBought.has(id);
   let gap = GOLDEN_GAP_SECONDS;
@@ -1772,7 +1775,10 @@ function boostPaying(G) {
 // (mismatches, e.g. the game changed its RNG), ship at ×2 again.
 function shipGain(enabled) {
   if (enabled.sequelGain) return enabled.sequelGain;
-  return enabled.goldenPick && goldenPickState.on ? SHIP_GAIN_PICKS : SHIP_GAIN;
+  return goldenPicksOn(enabled) ? SHIP_GAIN_PICKS : SHIP_GAIN;
+}
+function goldenPicksOn(enabled) {
+  return !!enabled.goldenPick && goldenPickState.on;
 }
 function sequelOptions(enabled) {
   return { gain: shipGain(enabled), spendAll: !!enabled.sequelSpendAll };
@@ -2696,7 +2702,7 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
-  const goldenScale = settings.ops.goldenPick ? (settings.goldenEvScale ?? 1) : 1;
+  const goldenScale = goldenPicksOn(settings.ops) ? (settings.goldenEvScale ?? GOLDEN_EV_SCALE_PICKS) : 1;
   const result = withSandbox(game, { clicksPerSec, goldenScale }, sim =>
     plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;

@@ -199,9 +199,12 @@ const GOLDEN_GAP_SECONDS = 446.6;
 const GOLDEN_EV = { normal: 455, wrath: 721 };
 const GOLDEN_EV_LONG_BUFFS = { normal: 707, wrath: 1267 };
 
-// Hidden setting goldenEvScale (only with Golden picks): multiplies this share
-// in the planner's rate, since picks plus the meltdown chain make a report
-// worth far more than these all-clicked estimates (sim sweep, CLAUDE.md).
+// With Golden picks working, the planner multiplies this share by
+// GOLDEN_EV_SCALE_PICKS (hidden setting goldenEvScale overrides it), since
+// picks plus the meltdown chain make a report worth far more than these
+// all-clicked estimates. Sim (fresh to 5e37, ship at ×6, seeds 7-27): ×100
+// 5.81 vs ×1 6.42 game hours, faster on 17 of 21.
+export const GOLDEN_EV_SCALE_PICKS = 100;
 export function goldenShare(s) {
   const owns = id => s.upgradesBought.has(id);
   let gap = GOLDEN_GAP_SECONDS;

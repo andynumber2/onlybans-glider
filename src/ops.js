@@ -899,7 +899,10 @@ export function boostPaying(G) {
 // (mismatches, e.g. the game changed its RNG), ship at ×2 again.
 export function shipGain(enabled) {
   if (enabled.sequelGain) return enabled.sequelGain;
-  return enabled.goldenPick && goldenPickState.on ? SHIP_GAIN_PICKS : SHIP_GAIN;
+  return goldenPicksOn(enabled) ? SHIP_GAIN_PICKS : SHIP_GAIN;
+}
+export function goldenPicksOn(enabled) {
+  return !!enabled.goldenPick && goldenPickState.on;
 }
 function sequelOptions(enabled) {
   return { gain: shipGain(enabled), spendAll: !!enabled.sequelSpendAll };

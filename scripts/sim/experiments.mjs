@@ -40,7 +40,7 @@ const CONFIG_SETS = {
   },
   // freshGoldScale's two ends only, for more seeds.
   freshGoldScale2: {
-    ev1: ['--set', 'ops.goldenPick=true'],
+    ev1: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=1'],
     ev100: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=100'],
   },
   // Fresh run to the 5e37 cap with golden picks (v0.26.0): sequel ship
@@ -62,9 +62,12 @@ const CONFIG_SETS = {
   },
   // Fresh run to the 5e37 cap with golden picks: the planner's golden report
   // value scaled (goldenEvScale; goldenShare in src/game.js assumes every
-  // report is clicked at the old EVs).
+  // report is clicked at the old EVs). Seeds 7-13 at ×2: ev1 9.13 / ev10
+  // 8.98 / ev100 8.70 game hours. At ×6 (v0.27.2, seeds 7-27): ev1 6.42 /
+  // ev100 5.81, ev100 faster on 17 of 21; shipped as the default with picks
+  // (v0.28.0), so ev1 must set goldenEvScale=1.
   freshGoldScale: {
-    ev1: ['--set', 'ops.goldenPick=true'],
+    ev1: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=1'],
     ev10: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=10'],
     ev100: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=100'],
   },
