@@ -875,9 +875,11 @@ export function auditReserve(G, enabled) {
 }
 
 // Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
+// ×6 only holds while golden picks work: if they turn themselves off
+// (mismatches, e.g. the game changed its RNG), ship at ×2 again.
 export function shipGain(enabled) {
   if (enabled.sequelGain) return enabled.sequelGain;
-  return enabled.goldenPick ? SHIP_GAIN_PICKS : SHIP_GAIN;
+  return enabled.goldenPick && goldenPickState.on ? SHIP_GAIN_PICKS : SHIP_GAIN;
 }
 function sequelOptions(enabled) {
   return { gain: shipGain(enabled), spendAll: !!enabled.sequelSpendAll };
