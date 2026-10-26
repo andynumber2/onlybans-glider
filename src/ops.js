@@ -634,6 +634,7 @@ const ROUTINES = {
     }
     const plan = sequelStatus(G, enabled);
     const btn = usable('#sequelButton');
+    if (plan.ship && boostPaying(G)) return null;
     if (!ready('sequel:ship', !!btn && plan.ship)) return null;
     if (!click(btn)) return null;
     return `ship? +${plan.pending} ⭐, ×${plan.multNow.toFixed(2)} → ×${plan.multAfter.toFixed(2)}`;
@@ -872,6 +873,25 @@ export function auditReserve(G, enabled) {
   let cost = Math.max(G.rawBps * 20, 25 * 20);
   if (G.s.upgradesBought.has('tool:sql')) cost *= 0.5;
   return Math.ceil(cost);
+}
+
+// Don't ship while a meltdown, bot storm or report chain is still paying: a
+// ship ends it, and what it would earn counts toward this ship's stars.
+// Live v0.27.1 run (2026-10-25): sequel 6 shipped 0.8 s into a meltdown,
+// right after the held Mustache Bin evader spawned a report to chain into
+// it. Held at most HOLD_SHIP_MAX_S per ship in case a state sticks.
+const HOLD_SHIP_MAX_S = 30;
+let holdShipSince = null;
+export function boostPaying(G) {
+  const paying = G.s.buffs.some(b => b.key === 'meltdown' || b.key === 'botFarmRaid') ||
+    G.stormFrames > 0 || (G.chainPending && G.chainPending.step > 0) ||
+    G.shimmers.some(x => x.type === 'bot' || (x.type === 'golden' && x.chain > 0));
+  if (!paying) {
+    holdShipSince = null;
+    return false;
+  }
+  if (holdShipSince === null) holdShipSince = G.T;
+  return (G.T - holdShipSince) / TICKS_PER_SEC < HOLD_SHIP_MAX_S;
 }
 
 // Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
