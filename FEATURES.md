@@ -24,7 +24,7 @@ Last checked against: `index-DjdI4Fjz.js`
 | `action:k` | Dupe response card | ✅ | Page, identify (answer from state), hotfix first, then the rest. |
 | `action:m` | Coin-Lock | ✅ | Only during duping/economy meta. |
 | `action:v` | Pull the Lever | ✅ | Whenever ready (cooldown-limited); with the Thermos at burnout 95 (80 during a boost); never during Kernel Panic. |
-| `action:a` | Ship a Sequel | ✅ | Ship when production after the sequel (incl. shop buys) is ≥2× the current (`sequelPlan`); 24 h late-game sims: ×2 beat ×4 on 9 of 9 seeds (×4 stopped shipping once income turned linear). |
+| `action:a` | Ship a Sequel | ✅ | Ship when production after the sequel (incl. shop buys) is ≥2× the current (`sequelPlan`), ≥6× with Golden picks (fresh to cap: 9.1 h at ×2, 6.5 h at ×5-×8); 24 h late-game sims: ×2 beat ×4 on 9 of 9 seeds (×4 stopped shipping once income turned linear). |
 | `action:p` | Prestige upgrade | ✅ | Review tiers first; other items only if they leave enough for the next tier or cost ≤1% of it. |
 | `action:l` | Launch sequel | ✅ | Right after the shop buys. |
 | `action:o` | Offline catch-up | ➖ | Game-internal on load. |

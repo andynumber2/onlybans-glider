@@ -70,7 +70,7 @@ function restoreDerived(G, saved) {
 // Bundles look this many units ahead for a department's next unlock.
 const BUNDLE_MAX_UNITS = 60;
 
-export function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
+export function withSandbox(game, { clicksPerSec = 0, bundles = true, goldenScale = 1 } = {}, fn) {
   const { logic, G, buildings, upgrades } = game;
   const s = G.s;
   const savedBuffs = s.buffs;
@@ -118,7 +118,7 @@ export function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn)
   const sim = {
     rate() {
       logic.calculateGains();
-      return (G.rawBps + clicksPerSec * G.clickPower) * (1 + goldenShare(s) + waveShare(s));
+      return (G.rawBps + clicksPerSec * G.clickPower) * (1 + goldenScale * goldenShare(s) + waveShare(s));
     },
     price(item) {
       if (item.type === 'building') return logic.buildingPrice(item.def.id, 1);
@@ -199,6 +199,9 @@ const GOLDEN_GAP_SECONDS = 446.6;
 const GOLDEN_EV = { normal: 455, wrath: 721 };
 const GOLDEN_EV_LONG_BUFFS = { normal: 707, wrath: 1267 };
 
+// Hidden setting goldenEvScale (only with Golden picks): multiplies this share
+// in the planner's rate, since picks plus the meltdown chain make a report
+// worth far more than these all-clicked estimates (sim sweep, CLAUDE.md).
 export function goldenShare(s) {
   const owns = id => s.upgradesBought.has(id);
   let gap = GOLDEN_GAP_SECONDS;

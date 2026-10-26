@@ -18,25 +18,6 @@ const CONFIG_SETS = {
   fresh: {
     base: [],
   },
-  // Fresh run to the 5e37 cap: endgame ship rule (src/planner.js
-  // endgameShip) and planner horizon 4h, against the current bot. Run with
-  // 7+ seeds: the same seed and config can differ by 9 h. Seeds 7-13: base
-  // 40.2 / endgame 38.9 / h4h 40.8 game hours, no consistent winner.
-  freshEndgame: {
-    base: [],
-    endgame: ['--set', 'ops.sequelEndgame=true'],
-    h4h: ['--set', 'horizon=14400'],
-  },
-  // Fresh run to the 5e37 cap: the planner's deadline objective (bans earned
-  // by the next ship or the cap; `deadline` in src/main.js), alone and with
-  // the endgame ship rule, against the current bot. 7+ seeds. Seeds 7-13:
-  // base 40.6 / deadline 39.8 / deadlineEndgame 45.9 game hours; deadline
-  // beat base on 4 of 7 (noise), deadlineEndgame lost on 6 of 7.
-  freshDeadline: {
-    base: [],
-    deadline: ['--set', 'deadline=true'],
-    deadlineEndgame: ['--set', 'deadline=true', '--set', 'ops.sequelEndgame=true'],
-  },
   // Fresh run to the 5e37 cap: ceiling for an RNG look-ahead on the golden
   // report effect pick (harness.mjs RIGS, GOLD_RANK). Seeds 7-13: base 43.7 /
   // gold10 12.6 / goldBest 12.9 game hours, faster on 7 of 7 seeds.
@@ -57,21 +38,42 @@ const CONFIG_SETS = {
     base: [],
     goldenPick: ['--set', 'ops.goldenPick=true'],
   },
+  // freshGoldScale's two ends only, for more seeds.
+  freshGoldScale2: {
+    ev1: ['--set', 'ops.goldenPick=true'],
+    ev100: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=100'],
+  },
+  // Fresh run to the 5e37 cap with golden picks (v0.26.0): sequel ship
+  // ratio. ×2 is freshGoldScale's ev1 on the same seeds.
+  freshShipPick: {
+    g1_5: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=1.5'],
+    g3: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=3'],
+  },
+  // Seeds 7-13: g1_5 11.57 / ×2 9.13 (freshGoldScale ev1) / g3 7.20 game
+  // hours, ×3 faster than ×2 on 6 of 7. Next: higher ratios.
+  freshShipPick2: {
+    g4: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=4'],
+    g5: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=5'],
+  },
+  // Seeds 7-13: g4 7.50 / g5 6.45 game hours (g3 7.20). Next: higher still.
+  freshShipPick3: {
+    g6: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=6'],
+    g8: ['--set', 'ops.goldenPick=true', '--set', 'ops.sequelGain=8'],
+  },
+  // Fresh run to the 5e37 cap with golden picks: the planner's golden report
+  // value scaled (goldenEvScale; goldenShare in src/game.js assumes every
+  // report is clicked at the old EVs).
+  freshGoldScale: {
+    ev1: ['--set', 'ops.goldenPick=true'],
+    ev10: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=10'],
+    ev100: ['--set', 'ops.goldenPick=true', '--set', 'goldenEvScale=100'],
+  },
   // Fresh run to the 5e37 cap with golden picks, Anti anti-cheat off
   // (no hit-test, no reaction delays, steady 14/s hammer). Seeds 7-13
   // (v0.25.0): 6.50 game hours, identical on every seed (with no human
   // pacing the bot never reads Math.random, so --seed changes nothing: n = 1).
   freshStealthOff: {
     goldenPickFast: ['--set', 'ops.goldenPick=true', '--set', 'stealth=false'],
-  },
-  // Fresh run to the 5e37 cap: more seeds for base vs the deadline objective
-  // (freshDeadline's gap was within noise). Seeds 29-43: base 42.1 /
-  // deadline 39.3, deadline faster on 10 of 15. Seeds 14-28 of freshDeadline
-  // went the other way (39.6 / 41.3 / deadlineEndgame 40.6). Pooled over 37
-  // seeds: 40.8 vs 40.2, no measurable effect.
-  freshConfirm: {
-    base: [],
-    deadline: ['--set', 'deadline=true'],
   },
   // Fresh run to the 5e37 cap: ceiling for an RNG look-ahead on the wave heat
   // roll (harness.mjs RIGS). wave10 = best of 10 draws, wave0 = best roll.

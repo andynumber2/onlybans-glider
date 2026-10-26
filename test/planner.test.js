@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { plan, groupSteps, waitFor, trendEta, sequelPlan, endgameShip, PRESTIGE, SHIP_RAMP_S } from '../src/planner.js';
+import { plan, groupSteps, waitFor, trendEta, sequelPlan, PRESTIGE } from '../src/planner.js';
 
 // Minimal Cookie Clicker style economy: price grows 15% per owned unit.
 function mockSim(defs, { upgrades = [] } = {}) {
@@ -199,39 +199,6 @@ test('trendEta extrapolates log growth of the current sequel', () => {
   assert.equal(trendEta(snaps.slice(0, 6), 1e33, 104 * min), null);
   const flat = snaps.map(x => ({ ...x, all: 1e30 }));
   assert.equal(trendEta(flat, 1e33, now), Infinity);
-});
-
-test('deadline objective counts earned bans, so spending is free', () => {
-  // Income 1/s from 10 owned `a`. `b` costs 600 for +0.1/s: payback 6000 s.
-  const sim = mockSim([{ id: 'a', cost: 1e9, bps: 0.1 }, { id: 'b', cost: 600, bps: 0.1 }]);
-  sim.owned.a = 10;
-  // Horizon 250 s (break-even 500 s): b does not pay back, save.
-  assert.equal(plan(sim, { bank: 600, horizon: 250, depth: 1 }).path.length, 0);
-  // 500 s left: buying b now adds 0.1 × 500 = 50 earned bans. Buy it.
-  const r = plan(sim, { bank: 600, horizon: 250, depth: 1, deadline: 500 });
-  assert.equal(r.path[0]?.item.def.id, 'b');
-  // Nothing past the deadline is considered: with no bank, b is 600 s away.
-  assert.equal(plan(sim, { bank: 0, horizon: 250, depth: 1, deadline: 500 }).path.length, 0);
-});
-
-test('sequelPlan times the last ship before the cap', () => {
-  const state = { level: 1.81e8, reputation: 0, owned: new Set(PRESTIGE.map(p => p.key)), bansAllTime: 2.05e37 };
-  // Cap far away: the ×2 rule decides, no endgame.
-  assert.equal(sequelPlan(state, { cap: 1e45, rate: 1e33 }).endgame, undefined);
-  // Next ×2 ship (~4.75e37) would be the last before 5e37: endgame mode.
-  const unknown = sequelPlan(state, { cap: 5e37, rate: null });
-  assert.equal(unknown.ship, false);
-  assert.equal(unknown.endgame, null);
-  // Slow income (cap ~83 h away): shipping beats never.
-  const slow = sequelPlan(state, { cap: 5e37, rate: 1e32 });
-  assert.ok(slow.endgame.seconds < slow.endgame.stay);
-  assert.ok(slow.endgame.bestAt < 5e37);
-  assert.equal(slow.ship, slow.endgame.bestAt === state.bansAllTime);
-  // Cap closer than the ramp: never ship.
-  const fast = endgameShip(state, 5e37, 3e37 / SHIP_RAMP_S);
-  assert.equal(fast.ship, false);
-  assert.equal(fast.bestAt, 5e37);
-  assert.equal(fast.seconds, fast.stay);
 });
 
 test('lazy buy-now ranking matches the full ranking', () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.26.0
+// @version      0.27.0
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-ClLVmN6W.js';
-const VERSION = '0.26.0';
+const VERSION = '0.27.0';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -34,12 +34,7 @@ const VERSION = '0.26.0';
 // Objective: maximize  bank(H) + rate(H) * H.
 // The tail term values production for one more horizon, so a purchase is worth
 // making when it pays back within roughly (2H - time until affordable).
-//
-// With `deadline` (seconds) the objective is instead the bans earned by then:
-// earned(D) = bank + spent + rate * (D - t) at a path's end. All-time bans are
-// what sequel stars and the cap count, and neither the bank nor buildings
-// survive a ship, so D is the time to the next ship or the cap (main.js).
-// Spending is free in this objective; it only costs the purchases it delays.
+
 
 // Cap on purchases made in the "spend now" phase, to bound planning time.
 const MAX_NOW_BUYS = 100;
@@ -48,15 +43,15 @@ const MAX_NOW_BUYS = 100;
 // rank first (lazyTop) instead of every candidate. From the 2026-10-19 save,
 // 120 game-minutes, seeds 7-18: 6x fewer calculateGains calls per replan, and
 // 36.142 vs 36.143 log10 bans (5 better, 6 worse, 1 tie). false is for tests.
-function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true, deadline = null }) {
-  const obj = objective(horizon, deadline);
+function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
+  const obj = objective(horizon);
   const rateStart = sim.rate();
   const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, obj);
   const gains = new Map();
   for (const c of ranked) gains.set(gainKey(c.item), gainEntry(c.item, c.price, c.gain, rateStart));
 
   // Phase 1: while the best-scoring item is affordable now and pays back
-  // within the objective's break-even (2H, or the deadline), buy it. Late game this can be
+  // within the objective's break-even (2H), buy it. Late game this can be
   // dozens of purchases, which a depth-limited search would never reach.
   // A bundle that isn't affordable yet is still worth working toward: buy its
   // next part now if that part is affordable (the rest stays ranked next time).
@@ -145,10 +140,7 @@ function lookahead(sim, bank, obj, depth, beam) {
 }
 
 // The value of a path's end node and how far ahead candidates are considered.
-function objective(horizon, deadline) {
-  if (deadline > 0) {
-    return { limit: deadline, breakEven: deadline, leaf: n => n.bank + n.spent + n.rate * (deadline - n.t) };
-  }
+function objective(horizon) {
   return { limit: horizon, breakEven: 2 * horizon, leaf: n => n.bank + n.rate * (horizon - n.t) + n.rate * horizon };
 }
 
@@ -331,6 +323,11 @@ const RESERVE_FREE_SHARE = 0.01;
 // plateaus, so ×4 (64× all-time bans) stopped shipping. 24 h, seeds 7-15:
 // ×1.6 37.68 / ×2 37.73 / ×4 37.41; ×2 beat ×4 on all 9 seeds.
 const SHIP_GAIN = 2;
+// With Golden picks (and its meltdown chain) a sequel's ramp is short, so a
+// bigger jump per ship pays. Fresh run to the 5e37 cap, seeds 7-13
+// (2026-10-25, v0.26.0): ×1.5 11.57 / ×2 9.13 / ×3 7.20 / ×4 7.50 / ×5 6.45 /
+// ×6 6.52 / ×8 6.47 game hours; flat from ×5, ×6 is the middle.
+const SHIP_GAIN_PICKS = 6;
 
 function prestigeStars(bansAllTime) {
   if (!(bansAllTime >= 1e12)) return 0;
@@ -373,44 +370,11 @@ function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
 // When not shipping yet, `target` says when we would: the fewest pending
 // stars that pass the ship rule, and the all-time bans that give them.
-//
-// With `cap` (the game's all-time bans cap) and `rate` (all-time bans per game
-// second, null while unknown), the last ship before the cap is timed by
-// `endgameShip` instead of the ×gain rule.
-function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false, cap = null, rate = null, rampS = SHIP_RAMP_S } = {}) {
+function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
   const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
   const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
-  // Shipping at ×gain multiplies stars by about gain, so all-time bans by
-  // gain³ before the next one: if that is past the cap, this ship is the last.
-  const gainAt = now.ship ? bansAllTime : target?.bansAllTime ?? Infinity;
-  if (!cap || gainAt * gain ** 3 < cap) return { pending, ...now, target };
-  const endgame = rate > 0 ? endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll, rampS }) : null;
-  return { pending, ...now, ship: !!endgame?.ship, target: null, endgame };
-}
-
-// Income lost to the ramp after a launch, in game seconds of the income before
-// it (measured ~90-100 min in one shipped run, 2026-10-19).
-const SHIP_RAMP_S = 95 * 60;
-
-// The ship point (all-time bans) that reaches `cap` soonest when it is the
-// last ship: flat income `rate` until then, `rampS` lost to the ramp, then
-// income × (multAfter / multNow). Compared on a log grid from now to the cap
-// against never shipping. `ship` is true when now is the best point.
-function endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll = false, rampS = SHIP_RAMP_S, points = 60 } = {}) {
-  const tStay = Math.max(0, cap - bansAllTime) / rate;
-  let best = { at: cap, seconds: tStay };
-  let nowSeconds = null;
-  for (let i = 0; i < points; i++) {
-    const at = bansAllTime * (cap / bansAllTime) ** (i / points);
-    const pending = prestigeStars(at) - level;
-    if (pending <= 0) continue;
-    const { multNow, multAfter } = shipCheck(level, reputation, owned, pending, Infinity, spendAll);
-    const seconds = (at - bansAllTime) / rate + rampS + (cap - at) / (rate * multAfter / multNow);
-    if (i === 0) nowSeconds = seconds;
-    if (seconds < best.seconds) best = { at, seconds };
-  }
-  return { ship: best.at === bansAllTime, bestAt: best.at, seconds: best.seconds, nowSeconds, stay: tStay };
+  return { pending, ...now, target };
 }
 
 function shipCheck(level, reputation, owned, pending, gain, spendAll) {
@@ -540,7 +504,7 @@ function restoreDerived(G, saved) {
 // Bundles look this many units ahead for a department's next unlock.
 const BUNDLE_MAX_UNITS = 60;
 
-function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
+function withSandbox(game, { clicksPerSec = 0, bundles = true, goldenScale = 1 } = {}, fn) {
   const { logic, G, buildings, upgrades } = game;
   const s = G.s;
   const savedBuffs = s.buffs;
@@ -588,7 +552,7 @@ function withSandbox(game, { clicksPerSec = 0, bundles = true } = {}, fn) {
   const sim = {
     rate() {
       logic.calculateGains();
-      return (G.rawBps + clicksPerSec * G.clickPower) * (1 + goldenShare(s) + waveShare(s));
+      return (G.rawBps + clicksPerSec * G.clickPower) * (1 + goldenScale * goldenShare(s) + waveShare(s));
     },
     price(item) {
       if (item.type === 'building') return logic.buildingPrice(item.def.id, 1);
@@ -669,6 +633,9 @@ const GOLDEN_GAP_SECONDS = 446.6;
 const GOLDEN_EV = { normal: 455, wrath: 721 };
 const GOLDEN_EV_LONG_BUFFS = { normal: 707, wrath: 1267 };
 
+// Hidden setting goldenEvScale (only with Golden picks): multiplies this share
+// in the planner's rate, since picks plus the meltdown chain make a report
+// worth far more than these all-clicked estimates (sim sweep, CLAUDE.md).
 function goldenShare(s) {
   const owns = id => s.upgradesBought.has(id);
   let gap = GOLDEN_GAP_SECONDS;
@@ -913,7 +880,7 @@ const OPS = [
   { key: 'hammer', label: 'Click the banhammer (stops when clicks are negligible)' },
   { key: 'pizza', label: 'Pizza party (feed everyone)' },
   { key: 'popups', label: 'Close pop-ups (judgment scroll, blue screen, welcome, field trip)' },
-  { key: 'sequel', label: 'Ship sequels (when production would at least ×2) and buy the Reputation shop' },
+  { key: 'sequel', label: 'Ship sequels (when production would at least ×2, ×6 with Golden picks) and buy the Reputation shop' },
   { key: 'streamer', label: 'Streamer minigames (speedrun, react, launch)' },
   { key: 'region', label: 'Wrong region: pick the right flag' },
   { key: 'legends', label: 'Legends (ZABURUFF, BENZON, crew)' },
@@ -1513,7 +1480,7 @@ const ROUTINES = {
   // Reputation shop one crate at a time, then launch.
   sequel(G, enabled, game) {
     const p = G.s.prestige;
-    const opts = sequelOptions(enabled, G, game.cap);
+    const opts = sequelOptions(enabled);
     if (G.ascending) {
       const screen = document.querySelector('#ascendScreen');
       if (!screen) return null;
@@ -1538,7 +1505,7 @@ const ROUTINES = {
       if (!click(confirm)) return null;
       return 'shipped a sequel';
     }
-    const plan = sequelStatus(G, enabled, game.cap);
+    const plan = sequelStatus(G, enabled);
     const btn = usable('#sequelButton');
     if (!ready('sequel:ship', !!btn && plan.ship)) return null;
     if (!click(btn)) return null;
@@ -1780,38 +1747,19 @@ function auditReserve(G, enabled) {
   return Math.ceil(cost);
 }
 
-// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll,
-// ops.sequelEndgame (time the last ship before the cap by endgameShip).
-function sequelOptions(enabled, G, cap) {
-  const opts = { gain: enabled.sequelGain ?? SHIP_GAIN, spendAll: !!enabled.sequelSpendAll };
-  if (enabled.sequelEndgame && cap) Object.assign(opts, { cap, rate: incomeRate(G) });
-  return opts;
+// Hidden experiment flags: ops.sequelGain (ship ratio), ops.sequelSpendAll.
+function shipGain(enabled) {
+  if (enabled.sequelGain) return enabled.sequelGain;
+  return enabled.goldenPick ? SHIP_GAIN_PICKS : SHIP_GAIN;
+}
+function sequelOptions(enabled) {
+  return { gain: shipGain(enabled), spendAll: !!enabled.sequelSpendAll };
 }
 
-function sequelStatus(G, enabled, cap) {
+function sequelStatus(G, enabled) {
   const p = G.s.prestige;
   return sequelPlan({ level: p.level, reputation: p.reputation, owned: p.upgrades, bansAllTime: G.s.bansAllTime },
-    sequelOptions(enabled, G, cap));
-}
-
-// All-time bans per game second over the last INCOME_WINDOW game minutes of
-// the current sequel, from one sample per game minute; null until
-// INCOME_MIN minutes are in (waves make shorter windows too bursty).
-const INCOME_WINDOW = 30;
-const INCOME_MIN = 20;
-const incomeSamples = [];
-function incomeRate(G) {
-  const last = incomeSamples[incomeSamples.length - 1];
-  if (last && last.sequels !== G.s.prestige.sequels) incomeSamples.length = 0;
-  if (!incomeSamples.length || G.T - incomeSamples[incomeSamples.length - 1].T >= 60 * TICKS_PER_SEC) {
-    incomeSamples.push({ T: G.T, all: G.s.bansAllTime, sequels: G.s.prestige.sequels });
-    if (incomeSamples.length > INCOME_WINDOW + 1) incomeSamples.shift();
-  }
-  const first = incomeSamples[0];
-  const newest = incomeSamples[incomeSamples.length - 1];
-  const seconds = (newest.T - first.T) / TICKS_PER_SEC;
-  if (seconds < INCOME_MIN * 60) return null;
-  return (newest.all - first.all) / seconds;
+    sequelOptions(enabled));
 }
 
 // Worst-case heat of the wave currently charging, after the audit the
@@ -2719,23 +2667,6 @@ function goldenStatusHtml(game, settings) {
   return html;
 }
 
-// Hidden experiment flag `deadline`: plan for bans earned by the next ship or
-// the cap, whichever comes first (see plan() in src/planner.js). The ETA comes
-// from the last 30 minutes' growth trend (usually early, so the planner errs
-// short); until there is one, 2 × the horizon, the old break-even.
-const MIN_DEADLINE_S = 60;
-function planDeadline(game, settings, stats) {
-  const seq = sequelStatus(game.G, settings.ops, game.cap);
-  if (seq.ship) return MIN_DEADLINE_S;
-  let target = seq.target?.bansAllTime ?? null;
-  if (seq.endgame && seq.endgame.bestAt > game.G.s.bansAllTime) target = seq.endgame.bestAt;
-  if (game.cap && !(target < game.cap)) target = game.cap;
-  if (!target) return 2 * settings.horizon;
-  const etaMs = trendEta(stats.snapshots(), target, Date.now());
-  if (etaMs === null || etaMs === Infinity) return 2 * settings.horizon;
-  return Math.max(MIN_DEADLINE_S, etaMs / 1000);
-}
-
 function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
@@ -2743,9 +2674,9 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
-  const deadline = settings.deadline ? planDeadline(game, settings, stats) : null;
-  const result = withSandbox(game, { clicksPerSec }, sim =>
-    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam, deadline }));
+  const goldenScale = settings.ops.goldenPick ? (settings.goldenEvScale ?? 1) : 1;
+  const result = withSandbox(game, { clicksPerSec, goldenScale }, sim =>
+    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
@@ -2810,8 +2741,8 @@ function render(game, ui, autoBought, stats) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  const seq = sequelStatus(game.G, settings.ops, game.cap);
-  html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
+  const seq = sequelStatus(game.G, settings.ops);
+  html += `<h4>Sequel (auto: ships at ×${shipGain(settings.ops)} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
     // Nothing planned: production stays flat, so bans grow linearly at the
@@ -2828,18 +2759,10 @@ function render(game, ui, autoBought, stats) {
     }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
   }
-  if (seq.endgame) {
-    const e = seq.endgame;
-    const when = e.bestAt >= game.cap ? 'never ship again' : `last ship at ${fmtNum(e.bestAt)} all-time`;
-    html += `<div title="Flat income at the last 30 game-minutes' rate">Endgame: ${when} · cap in ~${fmtTime(e.seconds)} (never: ~${fmtTime(e.stay)})</div>`;
-  } else if (seq.target === null && !seq.ship && settings.ops.sequelEndgame && game.cap) {
-    html += '<div>Endgame: measuring income</div>';
-  }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
-  if (deadline) status += `<div>Planning to: ${fmtTime(deadline)} (next ship or cap)</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
   if (settings.ops.goldenPick) {

@@ -17,12 +17,7 @@
 // Objective: maximize  bank(H) + rate(H) * H.
 // The tail term values production for one more horizon, so a purchase is worth
 // making when it pays back within roughly (2H - time until affordable).
-//
-// With `deadline` (seconds) the objective is instead the bans earned by then:
-// earned(D) = bank + spent + rate * (D - t) at a path's end. All-time bans are
-// what sequel stars and the cap count, and neither the bank nor buildings
-// survive a ship, so D is the time to the next ship or the cap (main.js).
-// Spending is free in this objective; it only costs the purchases it delays.
+
 
 // Cap on purchases made in the "spend now" phase, to bound planning time.
 const MAX_NOW_BUYS = 100;
@@ -31,15 +26,15 @@ const MAX_NOW_BUYS = 100;
 // rank first (lazyTop) instead of every candidate. From the 2026-10-19 save,
 // 120 game-minutes, seeds 7-18: 6x fewer calculateGains calls per replan, and
 // 36.142 vs 36.143 log10 bans (5 better, 6 worse, 1 tie). false is for tests.
-export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true, deadline = null }) {
-  const obj = objective(horizon, deadline);
+export function plan(sim, { bank, horizon, depth = 3, beam = 5, lazy = true }) {
+  const obj = objective(horizon);
   const rateStart = sim.rate();
   const ranked = rankCandidates(sim, { t: 0, bank, rate: rateStart }, obj);
   const gains = new Map();
   for (const c of ranked) gains.set(gainKey(c.item), gainEntry(c.item, c.price, c.gain, rateStart));
 
   // Phase 1: while the best-scoring item is affordable now and pays back
-  // within the objective's break-even (2H, or the deadline), buy it. Late game this can be
+  // within the objective's break-even (2H), buy it. Late game this can be
   // dozens of purchases, which a depth-limited search would never reach.
   // A bundle that isn't affordable yet is still worth working toward: buy its
   // next part now if that part is affordable (the rest stays ranked next time).
@@ -128,10 +123,7 @@ function lookahead(sim, bank, obj, depth, beam) {
 }
 
 // The value of a path's end node and how far ahead candidates are considered.
-function objective(horizon, deadline) {
-  if (deadline > 0) {
-    return { limit: deadline, breakEven: deadline, leaf: n => n.bank + n.spent + n.rate * (deadline - n.t) };
-  }
+function objective(horizon) {
   return { limit: horizon, breakEven: 2 * horizon, leaf: n => n.bank + n.rate * (horizon - n.t) + n.rate * horizon };
 }
 
@@ -314,6 +306,11 @@ const RESERVE_FREE_SHARE = 0.01;
 // plateaus, so ×4 (64× all-time bans) stopped shipping. 24 h, seeds 7-15:
 // ×1.6 37.68 / ×2 37.73 / ×4 37.41; ×2 beat ×4 on all 9 seeds.
 export const SHIP_GAIN = 2;
+// With Golden picks (and its meltdown chain) a sequel's ramp is short, so a
+// bigger jump per ship pays. Fresh run to the 5e37 cap, seeds 7-13
+// (2026-10-25, v0.26.0): ×1.5 11.57 / ×2 9.13 / ×3 7.20 / ×4 7.50 / ×5 6.45 /
+// ×6 6.52 / ×8 6.47 game hours; flat from ×5, ×6 is the middle.
+export const SHIP_GAIN_PICKS = 6;
 
 export function prestigeStars(bansAllTime) {
   if (!(bansAllTime >= 1e12)) return 0;
@@ -356,44 +353,11 @@ export function prestigeBuys(owned, reputation, { spendAll = false } = {}) {
 // Should we ship now, and what would it buy? `owned` is a Set of keys.
 // When not shipping yet, `target` says when we would: the fewest pending
 // stars that pass the ship rule, and the all-time bans that give them.
-//
-// With `cap` (the game's all-time bans cap) and `rate` (all-time bans per game
-// second, null while unknown), the last ship before the cap is timed by
-// `endgameShip` instead of the ×gain rule.
-export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false, cap = null, rate = null, rampS = SHIP_RAMP_S } = {}) {
+export function sequelPlan({ level, reputation, owned, bansAllTime }, { gain = SHIP_GAIN, spendAll = false } = {}) {
   const pending = Math.max(0, prestigeStars(bansAllTime) - level);
   const now = shipCheck(level, reputation, owned, pending, gain, spendAll);
   const target = now.ship ? null : shipTarget(level, reputation, owned, pending, gain, spendAll);
-  // Shipping at ×gain multiplies stars by about gain, so all-time bans by
-  // gain³ before the next one: if that is past the cap, this ship is the last.
-  const gainAt = now.ship ? bansAllTime : target?.bansAllTime ?? Infinity;
-  if (!cap || gainAt * gain ** 3 < cap) return { pending, ...now, target };
-  const endgame = rate > 0 ? endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll, rampS }) : null;
-  return { pending, ...now, ship: !!endgame?.ship, target: null, endgame };
-}
-
-// Income lost to the ramp after a launch, in game seconds of the income before
-// it (measured ~90-100 min in one shipped run, 2026-10-19).
-export const SHIP_RAMP_S = 95 * 60;
-
-// The ship point (all-time bans) that reaches `cap` soonest when it is the
-// last ship: flat income `rate` until then, `rampS` lost to the ramp, then
-// income × (multAfter / multNow). Compared on a log grid from now to the cap
-// against never shipping. `ship` is true when now is the best point.
-export function endgameShip({ level, reputation, owned, bansAllTime }, cap, rate, { spendAll = false, rampS = SHIP_RAMP_S, points = 60 } = {}) {
-  const tStay = Math.max(0, cap - bansAllTime) / rate;
-  let best = { at: cap, seconds: tStay };
-  let nowSeconds = null;
-  for (let i = 0; i < points; i++) {
-    const at = bansAllTime * (cap / bansAllTime) ** (i / points);
-    const pending = prestigeStars(at) - level;
-    if (pending <= 0) continue;
-    const { multNow, multAfter } = shipCheck(level, reputation, owned, pending, Infinity, spendAll);
-    const seconds = (at - bansAllTime) / rate + rampS + (cap - at) / (rate * multAfter / multNow);
-    if (i === 0) nowSeconds = seconds;
-    if (seconds < best.seconds) best = { at, seconds };
-  }
-  return { ship: best.at === bansAllTime, bestAt: best.at, seconds: best.seconds, nowSeconds, stay: tStay };
+  return { pending, ...now, target };
 }
 
 function shipCheck(level, reputation, owned, pending, gain, spendAll) {

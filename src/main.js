@@ -125,23 +125,6 @@ function goldenStatusHtml(game, settings) {
   return html;
 }
 
-// Hidden experiment flag `deadline`: plan for bans earned by the next ship or
-// the cap, whichever comes first (see plan() in src/planner.js). The ETA comes
-// from the last 30 minutes' growth trend (usually early, so the planner errs
-// short); until there is one, 2 × the horizon, the old break-even.
-const MIN_DEADLINE_S = 60;
-function planDeadline(game, settings, stats) {
-  const seq = sequelStatus(game.G, settings.ops, game.cap);
-  if (seq.ship) return MIN_DEADLINE_S;
-  let target = seq.target?.bansAllTime ?? null;
-  if (seq.endgame && seq.endgame.bestAt > game.G.s.bansAllTime) target = seq.endgame.bestAt;
-  if (game.cap && !(target < game.cap)) target = game.cap;
-  if (!target) return 2 * settings.horizon;
-  const etaMs = trendEta(stats.snapshots(), target, Date.now());
-  if (etaMs === null || etaMs === Infinity) return 2 * settings.horizon;
-  return Math.max(MIN_DEADLINE_S, etaMs / 1000);
-}
-
 function render(game, ui, autoBought, stats) {
   const { settings } = ui;
   const bank = game.G.s.bans;
@@ -149,9 +132,9 @@ function render(game, ui, autoBought, stats) {
   // While the hammer clicker runs, value click upgrades at its click rate.
   let clicksPerSec = settings.clicksPerSec;
   if (settings.auto && settings.ops.hammer) clicksPerSec = Math.max(clicksPerSec, hammerCps());
-  const deadline = settings.deadline ? planDeadline(game, settings, stats) : null;
-  const result = withSandbox(game, { clicksPerSec }, sim =>
-    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam, deadline }));
+  const goldenScale = settings.ops.goldenPick ? (settings.goldenEvScale ?? 1) : 1;
+  const result = withSandbox(game, { clicksPerSec, goldenScale }, sim =>
+    plan(sim, { bank, horizon: settings.horizon, depth: settings.depth, beam: settings.beam }));
   const ms = realNow() - t0;
 
   const steps = groupSteps(result.path, itemKey);
@@ -216,8 +199,8 @@ function render(game, ui, autoBought, stats) {
     html += special.map(u => `<div>${esc(iconText(u.icon))} ${esc(u.name)}</div>`).join('');
   }
 
-  const seq = sequelStatus(game.G, settings.ops, game.cap);
-  html += `<h4>Sequel (auto: ships at ×${settings.ops.sequelGain ?? SHIP_GAIN} production)</h4>`;
+  const seq = sequelStatus(game.G, settings.ops);
+  html += `<h4>Sequel (auto: ships at ×${shipGain(settings.ops)} production)</h4>`;
   if (seq.ship) html += `<div><b>Shipping now</b> · +${fmtNum(seq.pending)} ⭐</div>`;
   if (seq.target) {
     // Nothing planned: production stays flat, so bans grow linearly at the
@@ -234,18 +217,10 @@ function render(game, ui, autoBought, stats) {
     }
     html += `<div>+${fmtNum(seq.target.pending)} ⭐ at ${fmtNum(seq.target.bansAllTime)} all-time${eta}</div>`;
   }
-  if (seq.endgame) {
-    const e = seq.endgame;
-    const when = e.bestAt >= game.cap ? 'never ship again' : `last ship at ${fmtNum(e.bestAt)} all-time`;
-    html += `<div title="Flat income at the last 30 game-minutes' rate">Endgame: ${when} · cap in ~${fmtTime(e.seconds)} (never: ~${fmtTime(e.stay)})</div>`;
-  } else if (seq.target === null && !seq.ship && settings.ops.sequelEndgame && game.cap) {
-    html += '<div>Endgame: measuring income</div>';
-  }
   if (seq.buys.length) html += `<div class="muted">Buys: ${seq.buys.map(esc).join(', ')}</div>`;
 
   ui.renderRate(`${fmtNum(result.rate)}/s`);
   let status = `<div>Bank ${fmtNum(bank)} · planner ${ms.toFixed(0)}ms · ${esc(game.build)}</div>`;
-  if (deadline) status += `<div>Planning to: ${fmtTime(deadline)} (next ship or cap)</div>`;
   if (settings.auto) status += `<div>Auto: ${autoBought} bought this session · ${esc(buyerState.stop || 'starting')}</div>`;
   ui.renderStatus(status);
   if (settings.ops.goldenPick) {
