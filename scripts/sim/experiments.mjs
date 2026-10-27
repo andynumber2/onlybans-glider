@@ -12,6 +12,8 @@ const seeds = (process.argv[3] ?? '7').split(',').map(Number);
 
 const SAVE = ['--save', 'research/tmp/save-2026-10-19.txt'];
 const SAVE_CAP = ['--save', 'research/tmp/save-2026-10-22.txt'];
+// Speedrun mode: Anti anti-cheat off, golden picks on, live-like RNG nonces.
+const FAST = ['--nonces', '1', '--set', 'ops.goldenPick=true', '--set', 'stealth=false'];
 const CONFIG_SETS = {
   // Fresh run to the 5e37 cap (build JlW7JWZY) with the current bot.
   // Seeds 7-11: 36.95 game hours mean (33.5-41.8), 15-17 sequels, ~50 min wall.
@@ -128,6 +130,23 @@ const CONFIG_SETS = {
   raf: {
     raf16: [...SAVE, '--raf', '16'],
     raf50: [...SAVE],
+  },
+  // Speedrun mode (Anti anti-cheat off) with leaderboard nonces so seeds
+  // differ (--nonces, harness.mjs). base = current bot (golden picks, ×6
+  // ship, golden value ×100, takes the Lunchbox). Seeds 7-13 (2026-10-27):
+  // base 3.14 / g4 3.14 / g8 3.13 / ev1 2.73 game hours (skipping the
+  // Lunchbox, flag since removed: 3.03, faster on 4 of 7).
+  fastRetest: {
+    base: [...FAST],
+    g4: [...FAST, '--set', 'ops.sequelGain=4'],
+    g8: [...FAST, '--set', 'ops.sequelGain=8'],
+    ev1: [...FAST, '--set', 'goldenEvScale=1'],
+  },
+  // fastRetest's ev1 vs base on more seeds. Seeds 14-27: base 2.91 / ev1
+  // 3.16 game hours (ev1 faster on 4 of 14); over 21 seeds a tie.
+  fastEv: {
+    base: [...FAST],
+    ev1: [...FAST, '--set', 'goldenEvScale=1'],
   },
   stealth: {
     human: [],

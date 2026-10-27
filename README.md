@@ -22,7 +22,7 @@ BanGlider was World First to the 5e37 cap (Full Enforcement) on 2026-10-23: 3 da
 - **Anti anti-cheat** (top of Automation, on by default): only clicks what a person could see and reach (nothing under a game pop-up or off screen), with human reaction delays, a bursty hammer, and gaps between purchases. Turn it off for instant reactions and a steady 14 clicks/s hammer (just under the game's 15/s auto-clicker flag).
 - **Automation** section: one checkbox per game mechanic (hammer clicker, golden reports, ban waves and audits, the Lever, coffee, weekends, incidents, minigames, and more). Turn off a whole mechanic here; strategy within a mechanic is fixed by simulation and is not configurable.
 - **Horizon / Depth / Clicks/s**: planner settings. Defaults come from simulating the first 2 game-hours of a fresh run; adjust them for later phases. Clicks/s is overridden by the hammer clicker while it runs.
-- **Stats** section (bottom): wave verdicts, per-minute snapshots, and action counts, stored in IndexedDB. **Copy JSON** exports them.
+- **Stats** section (bottom): wave verdicts, per-minute snapshots, and action counts, stored in IndexedDB. **Copy JSON** exports them. **Show graph** opens a floating window (drag by its title bar, resize from the corner) with all-time bans and earned/s for the whole run, sequel ships and golden boosts marked; it keeps collecting while closed.
 - The panel warns when the live game build differs from the one the automation was last checked against (`ANALYZED_BUILD`).
 - Not automated: Ship a Sequel (prestige), seed funding, and prestige upgrades.
 

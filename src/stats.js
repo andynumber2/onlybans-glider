@@ -17,6 +17,11 @@ const HOUR_MS = 3600e3;
 const MAX_HOURLY = 168;
 const MAX_WAVES = 50;
 const MAX_RECENT_ACTIONS = 50;
+// Golden effect log, current game only: one compact row per clicked report
+// (about 40 bytes, about 10 KB for a run to the cap). A row's gain is the
+// all-time growth until the next report or GOLDEN_WINDOW_S, whichever comes first.
+const GOLDEN_WINDOW_S = 30;
+const MAX_GOLDEN = 600;
 export const TIER_NAMES = ['CLEAN', 'APPEALS', 'TRENDING', 'FAMOUS FP', 'SCANDAL'];
 
 // The leaderboard's last verified score, from the game's own leaderboard state
@@ -37,8 +42,18 @@ function verifiedScore() {
 }
 
 function emptyStats() {
-  return { started: Date.now(), snapshots: [], waves: [], tierCounts: [], wavesSeen: 0, actionCounts: {}, recentActions: [] };
+  return { started: Date.now(), snapshots: [], waves: [], tierCounts: [], wavesSeen: 0, actionCounts: {}, recentActions: [], ...emptyRun() };
 }
+
+// Per-game timeline in game seconds (G.T / 30, the clock the leaderboard's
+// cap time uses). golden rows: [s, effect index into goldenEffects,
+// log10 bans gained, meltdown already active 0/1, log10 bank]. ships: [s,
+// sequels after, log10 all-time]. capped: the game's own s.capped, in seconds.
+function emptyRun() {
+  return { goldenEffects: [], golden: [], ships: [], capped: null };
+}
+
+const lg = x => (x > 0 ? Math.round(Math.log10(x) * 100) / 100 : null);
 
 // Thins snapshots older than MINUTE_SPAN_MS to the first one in each hour.
 function compactSnapshots(snaps, now) {
@@ -97,6 +112,11 @@ export async function createStats() {
   let lastSnapshot = 0;
   let pendingWave = null;
   let preLaunch = {};
+  let lastT = 0;
+  let lastClicked = null;
+  let lastSequels = null;
+  let meltdownBefore = false;
+  let openGolden = null;
 
   const persist = () => {
     if (!dirty) return;
@@ -110,6 +130,41 @@ export async function createStats() {
     list.push(item);
     if (list.length > max) list.splice(0, list.length - max);
     dirty = true;
+  }
+
+  function trackRun(G) {
+    const s = G.s;
+    const sec = Math.round(G.T / 30);
+    // A new game restarts the tick counter.
+    if (G.T < lastT) {
+      Object.assign(data, emptyRun());
+      lastClicked = null;
+      lastSequels = null;
+      openGolden = null;
+    }
+    lastT = G.T;
+    if (openGolden && (s.eventsClicked > lastClicked || sec - openGolden.sec >= GOLDEN_WINDOW_S)) {
+      openGolden.row[2] = lg(s.bansAllTime - openGolden.all);
+      openGolden = null;
+      dirty = true;
+    }
+    if (lastClicked !== null && s.eventsClicked > lastClicked && s.lastEffect) {
+      let i = data.goldenEffects.indexOf(s.lastEffect);
+      if (i < 0) i = data.goldenEffects.push(s.lastEffect) - 1;
+      const row = [sec, i, null, meltdownBefore ? 1 : 0, lg(s.bans)];
+      push(data.golden, row, MAX_GOLDEN);
+      openGolden = { row, sec, all: s.bansAllTime };
+    }
+    lastClicked = s.eventsClicked;
+    if (lastSequels !== null && s.prestige.sequels > lastSequels) {
+      push(data.ships, [sec, s.prestige.sequels, lg(s.bansAllTime)], 100);
+    }
+    lastSequels = s.prestige.sequels;
+    if (s.capped && !data.capped) {
+      data.capped = { s: Math.round(s.capped.ticks / 30), sequels: s.capped.sequels };
+      dirty = true;
+    }
+    meltdownBefore = s.buffs.some(b => b.key === 'meltdown');
   }
 
   return {
@@ -162,6 +217,7 @@ export async function createStats() {
         push(data.waves, pendingWave, MAX_WAVES);
         pendingWave = null;
       }
+      trackRun(G);
       return snapped;
     },
 

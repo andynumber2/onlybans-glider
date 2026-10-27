@@ -882,11 +882,16 @@ export function auditReserve(G, enabled) {
 // it. Held at most HOLD_SHIP_MAX_S per ship in case a state sticks.
 const HOLD_SHIP_MAX_S = 30;
 let holdShipSince = null;
-export function boostPaying(G) {
-  const paying = G.s.buffs.some(b => b.key === 'meltdown' || b.key === 'botFarmRaid') ||
+// A meltdown, bot storm or report chain is paying right now (no side effects;
+// the graph reads it too).
+export function boostActive(G) {
+  return G.s.buffs.some(b => b.key === 'meltdown' || b.key === 'botFarmRaid') ||
     G.stormFrames > 0 || (G.chainPending && G.chainPending.step > 0) ||
     G.shimmers.some(x => x.type === 'bot' || (x.type === 'golden' && x.chain > 0));
-  if (!paying) {
+}
+
+export function boostPaying(G) {
+  if (!boostActive(G)) {
     holdShipSince = null;
     return false;
   }

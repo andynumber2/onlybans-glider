@@ -15,7 +15,7 @@ version=$(sed -nE 's|^// @version[[:space:]]+([^[:space:]]+).*|\1|p' src/header.
   echo "'use strict';"
   echo "const ANALYZED_BUILD = '$analyzed';"
   echo "const VERSION = '$version';"
-  for f in planner game input ops stats overlay auto main; do
+  for f in planner game input ops stats graph overlay auto main; do
     echo
     echo "// ---- src/$f.js ----"
     sed -E 's/^export //' "src/$f.js"

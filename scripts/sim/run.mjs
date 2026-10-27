@@ -7,6 +7,9 @@
 //   --save FILE                 start from a game save (localStorage `click2ban-save` text)
 //   --raf MS                    animation frame period (default 50; 16 = browser's 60 fps)
 //   --rig NAME                  rig a game roll (harness.mjs RIGS; sim-only ceiling tests)
+//   --userscript FILE           run another userscript build (default dist/)
+//   --nonces 1                  mix a seeded leaderboard nonce into the game RNG
+//                               at start and every minute, as the live server does
 //   --record FILE               save every game action (with its tick and the
 //                               game's RNG state) for scripts/sim/replay.mjs
 // Prints a JSON summary on the last line for scripting.
@@ -24,6 +27,7 @@ for (let i = 0; i < args.length; i += 2) {
   else if (k === 'bundle') opt.bundle = args[i + 1];
   else if (k === 'save') opt.save = args[i + 1];
   else if (k === 'rig') opt.rig = args[i + 1];
+  else if (k === 'userscript') opt.userscript = args[i + 1];
   else opt[k] = Number(args[i + 1]);
 }
 
@@ -43,7 +47,7 @@ for (const kv of opt.set) {
 
 const wall0 = realPerf.now();
 const save = opt.save ? (await readFile(opt.save, 'utf8')).trim() : null;
-const sim = await createSim({ seed: opt.seed, userscript: 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save, rafMs: opt.raf ?? 50, rig: opt.rig ?? null });
+const sim = await createSim({ seed: opt.seed, userscript: opt.userscript ?? 'dist/onlybans-glider.user.js', settings, hookActions: !!opt.record, bundle: opt.bundle ?? null, save, rafMs: opt.raf ?? 50, rig: opt.rig ?? null, nonces: !!opt.nonces });
 // Every action the game applies, as the server would receive it: tick, the
 // action, and the RNG state and all-time bans just before it was applied.
 const recorded = [];

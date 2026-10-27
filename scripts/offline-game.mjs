@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const SITE = 'research/site';
 
-export async function openOfflineGame({ viewport = { width: 1400, height: 900 }, settings = null, start = false } = {}) {
+export async function openOfflineGame({ viewport = { width: 1400, height: 900 }, settings = null, start = false, init = null, initArg = null } = {}) {
   const script = await readFile('dist/onlybans-glider.user.js', 'utf8');
   const bundlePath = (await readFile(path.join(SITE, 'LATEST'), 'utf8')).trim();
   const indexHtml = await readFile(path.join(SITE, 'index.html'), 'utf8');
@@ -37,6 +37,8 @@ export async function openOfflineGame({ viewport = { width: 1400, height: 900 },
     if (start) [...document.querySelectorAll('button')].find(b => /GET FUNDED/i.test(b.textContent))?.click();
     if (settings) localStorage.setItem('onlybans-glider-settings', JSON.stringify(settings));
   }, { settings, start });
+  // init: runs in the page before the userscript loads (e.g. to seed IndexedDB).
+  if (init) await page.evaluate(init, initArg);
   await page.addScriptTag({ content: script });
   await page.waitForSelector('#obh .content:not(.muted)', { timeout: 20000 });
   return { browser, page, errors };

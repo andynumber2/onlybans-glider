@@ -185,7 +185,7 @@ function rigBundle(src, rig) {
   return src.replace(from, to);
 }
 
-export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null, rafMs = 50, rig = null } = {}) {
+export async function createSim({ seed = 1, startMs = null, userscript = null, settings = null, hookActions = false, bundle = null, save = null, rafMs = 50, rig = null, nonces = false } = {}) {
   if (startMs === null) {
     startMs = Date.UTC(2026, 9, 15);
     if (save) startMs = JSON.parse(save).lastSave + 1000;
@@ -198,11 +198,12 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   // name so parallel plain runs never load it.
   await mkdir(resolve(SITE, 'assets'), { recursive: true });
   let assetPath = resolve(SITE, 'assets', bundleName);
-  if (hookActions || rig) {
-    const suffix = [hookActions ? 'hook' : null, rig ? `rig-${rig}` : null].filter(Boolean).join('-');
+  const hook = hookActions || nonces;
+  if (hook || rig) {
+    const suffix = [hook ? 'hook' : null, rig ? `rig-${rig}` : null].filter(Boolean).join('-');
     assetPath = resolve(SITE, 'assets', bundleName.replace(/\.js$/, `-${suffix}.js`));
     let src = await readFile(resolve(SITE, bundleName), 'utf8');
-    if (hookActions) src = exposeGoldenPick(hookDispatcher(src));
+    if (hook) src = exposeGoldenPick(hookDispatcher(src));
     if (rig) src = rigBundle(src, rig);
     await writeFile(assetPath, src);
   } else {
@@ -251,6 +252,21 @@ export async function createSim({ seed = 1, startMs = null, userscript = null, s
   if (userscript) {
     const text = await readFile(userscript, 'utf8');
     (0, eval)(text);
+  }
+
+  // nonces: the leaderboard server's RNG reseeds, which the sim otherwise
+  // lacks. Live, the game dispatches ["z", nonce] (mixing it into s.rng) at run
+  // start and after every check-in, one a minute (setInterval(oy, 6e4), read
+  // from code, build ClLVmN6W). Without them every run starts from the same
+  // constant RNG, so with Anti anti-cheat off (no Math.random in the bot) all
+  // seeds give the identical run. Nonces come from their own stream so they
+  // don't shift the bot's Math.random draws.
+  if (nonces) {
+    const next = seeded((seed ^ 0x9e3779b9) >>> 0);
+    const word = () => Math.floor(next() * 2 ** 32).toString(16).padStart(8, '0');
+    const mix = () => mod.__dispatch(['z', word() + word() + word() + word()]);
+    clock.setTimeout(mix, 1000);
+    clock.setInterval(mix, 60000);
   }
 
   return {

@@ -24,11 +24,16 @@ async function waitForGame() {
 async function start() {
   let game = null;
   const stats = await createStats();
+  const graph = await createGraph();
   const ui = createOverlay({
     onChange: () => tick(),
     onRefresh: () => rebind(),
     onCopyStats: () => navigator.clipboard.writeText(stats.exportJson(game ? { goldenPick: goldenPickStatus(game.G) } : {})),
-    onResetStats: () => stats.reset(),
+    onResetStats: () => {
+      stats.reset();
+      graph.reset();
+    },
+    graph,
   });
   bindInputSettings(() => ui.settings);
 
@@ -98,6 +103,7 @@ async function start() {
       loopHealth.maxGapMs = 0;
       loopHealth.hiddenSeen = false;
     }
+    graph.sample(game.G, boostActive(game.G));
     ui.renderStats(statsHtml(stats.summary()) + goldenStatusHtml(game, ui.settings));
   }, STATS_MS);
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OnlyBans Glider
 // @namespace    onlybans-glider
-// @version      0.28.0
+// @version      0.29.2
 // @description  Purchase planner and automation for onlybans.wtf
 // @match        *://onlybans.wtf/*
 // @match        *://*.onlybans.wtf/*
@@ -12,7 +12,7 @@
 (() => {
 'use strict';
 const ANALYZED_BUILD = 'index-ClLVmN6W.js';
-const VERSION = '0.28.0';
+const VERSION = '0.29.2';
 
 // ---- src/planner.js ----
 // Receding-horizon purchase planner.
@@ -1758,11 +1758,16 @@ function auditReserve(G, enabled) {
 // it. Held at most HOLD_SHIP_MAX_S per ship in case a state sticks.
 const HOLD_SHIP_MAX_S = 30;
 let holdShipSince = null;
-function boostPaying(G) {
-  const paying = G.s.buffs.some(b => b.key === 'meltdown' || b.key === 'botFarmRaid') ||
+// A meltdown, bot storm or report chain is paying right now (no side effects;
+// the graph reads it too).
+function boostActive(G) {
+  return G.s.buffs.some(b => b.key === 'meltdown' || b.key === 'botFarmRaid') ||
     G.stormFrames > 0 || (G.chainPending && G.chainPending.step > 0) ||
     G.shimmers.some(x => x.type === 'bot' || (x.type === 'golden' && x.chain > 0));
-  if (!paying) {
+}
+
+function boostPaying(G) {
+  if (!boostActive(G)) {
     holdShipSince = null;
     return false;
   }
@@ -1916,6 +1921,11 @@ const HOUR_MS = 3600e3;
 const MAX_HOURLY = 168;
 const MAX_WAVES = 50;
 const MAX_RECENT_ACTIONS = 50;
+// Golden effect log, current game only: one compact row per clicked report
+// (about 40 bytes, about 10 KB for a run to the cap). A row's gain is the
+// all-time growth until the next report or GOLDEN_WINDOW_S, whichever comes first.
+const GOLDEN_WINDOW_S = 30;
+const MAX_GOLDEN = 600;
 const TIER_NAMES = ['CLEAN', 'APPEALS', 'TRENDING', 'FAMOUS FP', 'SCANDAL'];
 
 // The leaderboard's last verified score, from the game's own leaderboard state
@@ -1936,8 +1946,18 @@ function verifiedScore() {
 }
 
 function emptyStats() {
-  return { started: Date.now(), snapshots: [], waves: [], tierCounts: [], wavesSeen: 0, actionCounts: {}, recentActions: [] };
+  return { started: Date.now(), snapshots: [], waves: [], tierCounts: [], wavesSeen: 0, actionCounts: {}, recentActions: [], ...emptyRun() };
 }
+
+// Per-game timeline in game seconds (G.T / 30, the clock the leaderboard's
+// cap time uses). golden rows: [s, effect index into goldenEffects,
+// log10 bans gained, meltdown already active 0/1, log10 bank]. ships: [s,
+// sequels after, log10 all-time]. capped: the game's own s.capped, in seconds.
+function emptyRun() {
+  return { goldenEffects: [], golden: [], ships: [], capped: null };
+}
+
+const lg = x => (x > 0 ? Math.round(Math.log10(x) * 100) / 100 : null);
 
 // Thins snapshots older than MINUTE_SPAN_MS to the first one in each hour.
 function compactSnapshots(snaps, now) {
@@ -1996,6 +2016,11 @@ async function createStats() {
   let lastSnapshot = 0;
   let pendingWave = null;
   let preLaunch = {};
+  let lastT = 0;
+  let lastClicked = null;
+  let lastSequels = null;
+  let meltdownBefore = false;
+  let openGolden = null;
 
   const persist = () => {
     if (!dirty) return;
@@ -2009,6 +2034,41 @@ async function createStats() {
     list.push(item);
     if (list.length > max) list.splice(0, list.length - max);
     dirty = true;
+  }
+
+  function trackRun(G) {
+    const s = G.s;
+    const sec = Math.round(G.T / 30);
+    // A new game restarts the tick counter.
+    if (G.T < lastT) {
+      Object.assign(data, emptyRun());
+      lastClicked = null;
+      lastSequels = null;
+      openGolden = null;
+    }
+    lastT = G.T;
+    if (openGolden && (s.eventsClicked > lastClicked || sec - openGolden.sec >= GOLDEN_WINDOW_S)) {
+      openGolden.row[2] = lg(s.bansAllTime - openGolden.all);
+      openGolden = null;
+      dirty = true;
+    }
+    if (lastClicked !== null && s.eventsClicked > lastClicked && s.lastEffect) {
+      let i = data.goldenEffects.indexOf(s.lastEffect);
+      if (i < 0) i = data.goldenEffects.push(s.lastEffect) - 1;
+      const row = [sec, i, null, meltdownBefore ? 1 : 0, lg(s.bans)];
+      push(data.golden, row, MAX_GOLDEN);
+      openGolden = { row, sec, all: s.bansAllTime };
+    }
+    lastClicked = s.eventsClicked;
+    if (lastSequels !== null && s.prestige.sequels > lastSequels) {
+      push(data.ships, [sec, s.prestige.sequels, lg(s.bansAllTime)], 100);
+    }
+    lastSequels = s.prestige.sequels;
+    if (s.capped && !data.capped) {
+      data.capped = { s: Math.round(s.capped.ticks / 30), sequels: s.capped.sequels };
+      dirty = true;
+    }
+    meltdownBefore = s.buffs.some(b => b.key === 'meltdown');
   }
 
   return {
@@ -2061,6 +2121,7 @@ async function createStats() {
         push(data.waves, pendingWave, MAX_WAVES);
         pendingWave = null;
       }
+      trackRun(G);
       return snapped;
     },
 
@@ -2090,6 +2151,316 @@ async function createStats() {
   };
 }
 
+// ---- src/graph.js ----
+// Live graph of the run: all-time bans and earned/s, in a floating window
+// opened from the Stats section. Samples every 5 s whether or not the window
+// is open, and draws only while it is open.
+//
+// The window lives inside #obh, so human-mode clicks pass through it like
+// they do through the panel (topmostAt in input.js).
+
+const GRAPH_DOC = 'graph';
+const GRAPH_SAMPLE_MS = 5000;
+const GRAPH_PERSIST_MS = 30000;
+// Past this many points, every other point in the older half is dropped, so a
+// long run keeps its whole history at coarser resolution (about 100 KB).
+const GRAPH_MAX_POINTS = 4000;
+// A longer gap between points (tab closed, page reloading) breaks the lines.
+const GRAPH_GAP_MS = 10 * 60e3;
+const GRAPH_SPANS = [['15m', 900], ['1h', 3600], ['run', 0]];
+const GRAPH_MIN = { w: 260, h: 180 };
+const GRAPH_COLORS = {
+  all: '#f5c542', earned: '#6fdc6f', bps: '#5a79c8', grid: '#2a3150', text: '#8592b3',
+  sequel: '#ff6b6b', boost: 'rgba(190,120,255,.18)',
+};
+
+async function createGraph() {
+  let points = [];
+  try {
+    const saved = await idb('readonly', s => s.get(GRAPH_DOC));
+    if (Array.isArray(saved)) points = saved;
+  } catch {}
+  let dirty = false;
+  let lastSample = 0;
+  // A boost seen on any 1 s tick since the last point, so short ones show.
+  let boostSeen = false;
+  let onPoint = null;
+
+  const persist = () => {
+    if (!dirty) return;
+    dirty = false;
+    idb('readwrite', s => s.put(points, GRAPH_DOC)).catch(() => {});
+  };
+  setInterval(persist, GRAPH_PERSIST_MS);
+  window.addEventListener('pagehide', persist);
+
+  return {
+    // Called about once a second from the stats timer.
+    sample(G, boost) {
+      boostSeen = boostSeen || boost;
+      const now = Date.now();
+      if (now - lastSample < GRAPH_SAMPLE_MS) return;
+      lastSample = now;
+      const s = G.s;
+      // A new game (a verified start wipes the save) starts a new graph.
+      const last = points[points.length - 1];
+      if (last && s.bansAllTime < last.all / 2) points = [];
+      points.push({ t: now, all: s.bansAllTime, bps: G.bps, seq: s.prestige.sequels, boost: boostSeen });
+      boostSeen = false;
+      if (points.length > GRAPH_MAX_POINTS) {
+        const half = Math.floor(points.length / 2);
+        points = points.slice(0, half).filter((_, i) => i % 2 === 0).concat(points.slice(half));
+      }
+      dirty = true;
+      if (onPoint) onPoint();
+    },
+
+    reset() {
+      points = [];
+      dirty = true;
+      persist();
+      if (onPoint) onPoint();
+    },
+
+    // Builds the window inside parent. opts: the saved settings.graph object,
+    // save() to store it, onOpen(open) when it opens or closes.
+    mount(parent, opts, save, onOpen) {
+      const win = document.createElement('div');
+      win.className = 'obhGraph';
+      win.innerHTML = `
+        <div class="gHead"><span class="gTitle">Graph</span><span class="gNow"></span>
+          <select title="Time window">${GRAPH_SPANS.map(([l, v]) => `<option value="${v}">${l}</option>`).join('')}</select>
+          <button data-act="graphClose" title="Hide graph">×</button></div>
+        <canvas></canvas>`;
+      parent.appendChild(win);
+      const canvas = win.querySelector('canvas');
+      const now = win.querySelector('.gNow');
+      const span = win.querySelector('select');
+      span.value = opts.span;
+
+      const draw = () => {
+        if (!opts.open) return;
+        now.textContent = graphNowText(points);
+        drawGraph(canvas, points, opts.span);
+      };
+      const place = () => {
+        const w = Math.max(GRAPH_MIN.w, Math.min(opts.w, window.innerWidth - 8));
+        const h = Math.max(GRAPH_MIN.h, Math.min(opts.h, window.innerHeight - 8));
+        win.style.width = w + 'px';
+        win.style.height = h + 'px';
+        win.style.left = Math.min(Math.max(0, opts.x), Math.max(0, window.innerWidth - w)) + 'px';
+        win.style.top = Math.min(Math.max(0, opts.y), Math.max(0, window.innerHeight - 32)) + 'px';
+      };
+      const setOpen = open => {
+        opts.open = open;
+        win.classList.toggle('open', open);
+        save();
+        onOpen(open);
+        if (open) {
+          place();
+          draw();
+        }
+      };
+
+      span.addEventListener('change', () => {
+        opts.span = Number(span.value);
+        save();
+        draw();
+      });
+      win.querySelector('[data-act="graphClose"]').addEventListener('click', () => setOpen(false));
+      makeDraggable(win, win.querySelector('.gHead'), () => {
+        const r = win.getBoundingClientRect();
+        opts.x = r.left;
+        opts.y = r.top;
+        save();
+      });
+      // Resizing (CSS resize handle) redraws, and saves the size once it settles.
+      let resizeTimer = null;
+      new ResizeObserver(() => {
+        if (!opts.open) return;
+        draw();
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          opts.w = win.offsetWidth;
+          opts.h = win.offsetHeight;
+          save();
+        }, 500);
+      }).observe(win);
+      window.addEventListener('resize', () => {
+        if (opts.open) place();
+      });
+      onPoint = draw;
+      setOpen(opts.open);
+      return { setOpen };
+    },
+  };
+}
+
+// Earned bans per second between consecutive points (includes golden lumps,
+// which never show in production), stamped at the later point.
+function earnedRates(points) {
+  const out = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dt = (b.t - a.t) / 1000;
+    if (dt > 0 && b.all > a.all) out.push({ t: b.t, v: (b.all - a.all) / dt });
+  }
+  return out;
+}
+
+function graphNowText(points) {
+  if (!points.length) return '';
+  const rates = earnedRates(points.slice(-2));
+  const all = fmtNum(points[points.length - 1].all);
+  if (!rates.length) return all;
+  return `${all} · ${fmtNum(rates[0].v)}/s`;
+}
+
+function drawGraph(canvas, points, spanSec) {
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const ctx = canvas.getContext && canvas.getContext('2d');
+  if (!w || !h || !ctx) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '10px ui-monospace, Menlo, monospace';
+  ctx.textBaseline = 'middle';
+  if (points.length < 2) {
+    ctx.fillStyle = GRAPH_COLORS.text;
+    ctx.fillText('Collecting… (a point every 5 s)', 8, 14);
+    return;
+  }
+
+  const start = points[0].t;
+  const end = points[points.length - 1].t;
+  const from = spanSec ? Math.max(start, end - spanSec * 1000) : start;
+  const vis = points.filter(p => p.t >= from);
+  const rates = earnedRates(points).filter(r => r.t >= from);
+  const left = 40;
+  const right = 6;
+  const top = 4;
+  const bottom = 16;
+  const gap = 14;
+  const plotH = (h - top - bottom - gap) / 2;
+  const x = t => left + (t - from) / Math.max(1, end - from) * (w - left - right);
+  const plots = [
+    { top, series: [{ label: 'all-time bans', pts: vis.map(p => ({ t: p.t, v: p.all })), color: GRAPH_COLORS.all, width: 1.5 }] },
+    {
+      top: top + plotH + gap, series: [
+        { label: 'production/s', pts: vis.map(p => ({ t: p.t, v: p.bps })), color: GRAPH_COLORS.bps, width: 1 },
+        { label: 'earned/s', pts: rates, color: GRAPH_COLORS.earned, width: 1.5 },
+      ],
+    },
+  ];
+
+  // Boost bands: from the previous point to each point that saw a boost.
+  ctx.fillStyle = GRAPH_COLORS.boost;
+  for (let i = 1; i < vis.length; i++) {
+    if (!vis[i].boost) continue;
+    const x0 = x(vis[i - 1].t);
+    const x1 = Math.max(x0 + 1, x(vis[i].t));
+    for (const p of plots) ctx.fillRect(x0, p.top, x1 - x0, plotH);
+  }
+
+  for (const p of plots) drawPlot(ctx, p, plotH, left, w - right, x);
+
+  // Sequel ships.
+  ctx.strokeStyle = GRAPH_COLORS.sequel;
+  ctx.beginPath();
+  for (let i = 1; i < vis.length; i++) {
+    if (vis[i].seq === vis[i - 1].seq) continue;
+    const xs = Math.round(x(vis[i].t)) + 0.5;
+    ctx.moveTo(xs, top);
+    ctx.lineTo(xs, top + 2 * plotH + gap);
+  }
+  ctx.stroke();
+
+  // Time axis: elapsed since the graph's first point.
+  const stepMin = niceStep((end - from) / 60e3 / 5);
+  ctx.fillStyle = GRAPH_COLORS.text;
+  ctx.textAlign = 'center';
+  const firstTick = Math.ceil((from - start) / 60e3 / stepMin) * stepMin;
+  for (let m = firstTick; start + m * 60e3 <= end; m += stepMin) {
+    // Keep each label inside the canvas.
+    const label = elapsedLabel(m);
+    const half = ctx.measureText(label).width / 2;
+    const xm = Math.min(Math.max(x(start + m * 60e3), half), w - half);
+    ctx.fillText(label, xm, h - bottom / 2);
+  }
+  ctx.textAlign = 'left';
+}
+
+// One log10 plot: decade grid lines with labels, then each series.
+function drawPlot(ctx, plot, height, x0, x1, x) {
+  const vals = [];
+  for (const s of plot.series) for (const p of s.pts) if (p.v > 0) vals.push(Math.log10(p.v));
+  let lo = Math.min(...vals);
+  let hi = Math.max(...vals);
+  if (!vals.length) {
+    lo = 0;
+    hi = 1;
+  }
+  if (hi - lo < 1) {
+    lo -= 0.5;
+    hi += 0.5;
+  }
+  const y = v => plot.top + height - (Math.log10(v) - lo) / (hi - lo) * height;
+
+  const step = Math.max(1, Math.ceil((hi - lo) / 4));
+  ctx.strokeStyle = GRAPH_COLORS.grid;
+  ctx.fillStyle = GRAPH_COLORS.text;
+  ctx.textAlign = 'right';
+  ctx.beginPath();
+  for (let k = Math.ceil(lo / step) * step; k <= hi; k += step) {
+    const yk = Math.round(y(10 ** k)) + 0.5;
+    ctx.moveTo(x0, yk);
+    ctx.lineTo(x1, yk);
+    ctx.fillText(`1e${k}`, x0 - 3, yk);
+  }
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  // Legend: each series' name in its own color.
+  let lx = x0 + 4;
+  for (const s of plot.series) {
+    ctx.fillStyle = s.color;
+    ctx.fillText(s.label, lx, plot.top + 7);
+    lx += ctx.measureText(s.label).width + 10;
+  }
+
+  for (const s of plot.series) {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width;
+    ctx.beginPath();
+    let prev = null;
+    for (const p of s.pts) {
+      if (!(p.v > 0)) {
+        prev = null;
+        continue;
+      }
+      if (prev && p.t - prev.t <= GRAPH_GAP_MS) ctx.lineTo(x(p.t), y(p.v));
+      else ctx.moveTo(x(p.t), y(p.v));
+      prev = p;
+    }
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+}
+
+function niceStep(min) {
+  for (const s of [1, 2, 5, 10, 15, 30, 60, 120, 240, 480, 720, 1440]) if (s >= min) return s;
+  return 2880;
+}
+
+function elapsedLabel(min) {
+  if (min < 60) return `${min}m`;
+  const mm = String(min % 60).padStart(2, '0');
+  return `${Math.floor(min / 60)}h${mm}`;
+}
+
 // ---- src/overlay.js ----
 // Overlay panel: plan display, settings, and the automation toggles.
 
@@ -2100,15 +2471,19 @@ const HORIZONS = [
 const DEFAULTS = {
   auto: false, stealth: true, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
+  graph: { open: false, x: 420, y: 12, w: 560, h: 340, span: 0 },
 };
 const LOG_LINES = 6;
 
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
-    return { ...DEFAULTS, ...saved, ops: { ...OPS_DEFAULTS, ...(saved.ops ?? {}) } };
+    return {
+      ...DEFAULTS, ...saved, ops: { ...OPS_DEFAULTS, ...(saved.ops ?? {}) },
+      graph: { ...DEFAULTS.graph, ...(saved.graph ?? {}) },
+    };
   } catch {
-    return { ...DEFAULTS, ops: { ...OPS_DEFAULTS } };
+    return { ...DEFAULTS, ops: { ...OPS_DEFAULTS }, graph: { ...DEFAULTS.graph } };
   }
 }
 
@@ -2151,10 +2526,19 @@ const CSS = `
 #obh details.ops label.stealth { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #2a3150; }
 #obh details.ops input { width: auto; }
 #obh .opsLog { color: #8592b3; margin-top: 4px; white-space: pre-wrap; }
+#obh .obhGraph { position: fixed; display: none; flex-direction: column; resize: both; overflow: hidden;
+  min-width: 260px; min-height: 180px; background: #0a0d18; border: 2px solid #f5c542; border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+#obh .obhGraph.open { display: flex; }
+#obh .obhGraph .gHead { display: flex; gap: 6px; align-items: center; padding: 3px 6px; background: #f5c542;
+  color: #111; cursor: move; user-select: none; font-weight: 700; }
+#obh .obhGraph .gNow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
+#obh .obhGraph .gHead button { all: unset; cursor: pointer; padding: 0 4px; font-weight: 700; }
+#obh .obhGraph canvas { flex: 1; min-height: 0; width: 100%; display: block; }
 #buildings .product.obh-pick { outline: 3px solid #6fdc6f; outline-offset: -3px; }
 `;
 
-function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
+function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats, graph }) {
   const settings = loadSettings();
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -2186,7 +2570,8 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
         <div class="statsLive muted"></div>
         <div class="statsBody muted">Collecting…</div>
         <div class="controls"><button data-act="copyStats">Copy JSON</button>
-          <button data-act="resetStats">Reset</button></div>
+          <button data-act="resetStats">Reset</button>
+          <button data-act="graph">Show graph</button></div>
       </details>
     </div>`;
   document.body.appendChild(root);
@@ -2242,6 +2627,11 @@ function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
   root.querySelector('[data-act="resetStats"]').addEventListener('click', () => {
     if (confirm('Clear all recorded stats?')) onResetStats();
   });
+  const graphBtn = root.querySelector('[data-act="graph"]');
+  const graphWin = graph.mount(root, settings.graph, () => saveSettings(settings), open => {
+    graphBtn.textContent = open ? 'Hide graph' : 'Show graph';
+  });
+  graphBtn.addEventListener('click', () => graphWin.setOpen(!settings.graph.open));
   root.querySelector('[data-act="collapse"]').addEventListener('click', () => {
     settings.collapsed = !settings.collapsed;
     root.classList.toggle('collapsed', settings.collapsed);
@@ -2314,7 +2704,7 @@ function place(root, settings) {
 function makeDraggable(el, handle, onDrop) {
   let start = null;
   handle.addEventListener('pointerdown', e => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button, select')) return;
     const rect = el.getBoundingClientRect();
     el.style.right = 'auto';
     el.style.left = rect.left + 'px';
@@ -2340,17 +2730,37 @@ function highlightBuilding(index) {
   if (row) row.classList.add('obh-pick');
 }
 
+// Short suffixes as the game writes them: K to No, then a prefix on each
+// tens name (Dc, UnDc, DoDc, ... Vg, UnVg, ...), up to 1e300.
+const NUM_UNITS = (() => {
+  const prefixes = ['', 'Un', 'Do', 'Tr', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No'];
+  const tens = ['Dc', 'Vg', 'Tg', 'Qd', 'Qq', 'Sg', 'St', 'Og', 'Nn'];
+  const out = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No'];
+  for (const t of tens) for (const p of prefixes) out.push(p + t);
+  return out;
+})();
+
 function fmtNum(n) {
   if (!isFinite(n)) return '∞';
   if (Math.abs(n) < 1000) return n < 10 ? n.toFixed(1) : Math.round(n).toString();
-  const units = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
-  if (Math.abs(n) >= Math.pow(1000, units.length + 1)) return n.toExponential(3);
-  let i = -1;
-  while (Math.abs(n) >= 1000) {
-    n /= 1000;
+  // Scale by an exact power of ten (repeated /1000 drifts: 1e33 became 999.99No),
+  // then fix a log10 that lands a hair off, and a rounding carry (999.96 → 1.00 of the next unit).
+  let i = Math.floor(Math.log10(Math.abs(n)) / 3) - 1;
+  let m = n / 10 ** (3 * (i + 1));
+  if (Math.abs(m) >= 1000) {
+    m /= 1000;
+    i++;
+  } else if (Math.abs(m) < 1) {
+    m *= 1000;
+    i--;
+  }
+  const digits = Math.abs(m) < 10 ? 2 : 1;
+  if (Math.abs(Number(m.toFixed(digits))) >= 1000) {
+    m /= 1000;
     i++;
   }
-  return n.toFixed(n < 10 ? 2 : 1) + units[i];
+  if (i >= NUM_UNITS.length) return n.toExponential(3);
+  return m.toFixed(Math.abs(m) < 10 ? 2 : 1) + NUM_UNITS[i];
 }
 
 function fmtTime(sec) {
@@ -2594,11 +3004,16 @@ async function waitForGame() {
 async function start() {
   let game = null;
   const stats = await createStats();
+  const graph = await createGraph();
   const ui = createOverlay({
     onChange: () => tick(),
     onRefresh: () => rebind(),
     onCopyStats: () => navigator.clipboard.writeText(stats.exportJson(game ? { goldenPick: goldenPickStatus(game.G) } : {})),
-    onResetStats: () => stats.reset(),
+    onResetStats: () => {
+      stats.reset();
+      graph.reset();
+    },
+    graph,
   });
   bindInputSettings(() => ui.settings);
 
@@ -2668,6 +3083,7 @@ async function start() {
       loopHealth.maxGapMs = 0;
       loopHealth.hiddenSeen = false;
     }
+    graph.sample(game.G, boostActive(game.G));
     ui.renderStats(statsHtml(stats.summary()) + goldenStatusHtml(game, ui.settings));
   }, STATS_MS);
 }

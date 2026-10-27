@@ -7,15 +7,19 @@ const HORIZONS = [
 const DEFAULTS = {
   auto: false, stealth: true, horizon: 3600, clicksPerSec: 0, depth: 1, beam: 5, collapsed: false,
   side: 'left', x: 12, y: 12, ops: {},
+  graph: { open: false, x: 420, y: 12, w: 560, h: 340, span: 0 },
 };
 const LOG_LINES = 6;
 
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
-    return { ...DEFAULTS, ...saved, ops: { ...OPS_DEFAULTS, ...(saved.ops ?? {}) } };
+    return {
+      ...DEFAULTS, ...saved, ops: { ...OPS_DEFAULTS, ...(saved.ops ?? {}) },
+      graph: { ...DEFAULTS.graph, ...(saved.graph ?? {}) },
+    };
   } catch {
-    return { ...DEFAULTS, ops: { ...OPS_DEFAULTS } };
+    return { ...DEFAULTS, ops: { ...OPS_DEFAULTS }, graph: { ...DEFAULTS.graph } };
   }
 }
 
@@ -58,10 +62,19 @@ const CSS = `
 #obh details.ops label.stealth { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #2a3150; }
 #obh details.ops input { width: auto; }
 #obh .opsLog { color: #8592b3; margin-top: 4px; white-space: pre-wrap; }
+#obh .obhGraph { position: fixed; display: none; flex-direction: column; resize: both; overflow: hidden;
+  min-width: 260px; min-height: 180px; background: #0a0d18; border: 2px solid #f5c542; border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+#obh .obhGraph.open { display: flex; }
+#obh .obhGraph .gHead { display: flex; gap: 6px; align-items: center; padding: 3px 6px; background: #f5c542;
+  color: #111; cursor: move; user-select: none; font-weight: 700; }
+#obh .obhGraph .gNow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
+#obh .obhGraph .gHead button { all: unset; cursor: pointer; padding: 0 4px; font-weight: 700; }
+#obh .obhGraph canvas { flex: 1; min-height: 0; width: 100%; display: block; }
 #buildings .product.obh-pick { outline: 3px solid #6fdc6f; outline-offset: -3px; }
 `;
 
-export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }) {
+export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats, graph }) {
   const settings = loadSettings();
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -93,7 +106,8 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
         <div class="statsLive muted"></div>
         <div class="statsBody muted">Collecting…</div>
         <div class="controls"><button data-act="copyStats">Copy JSON</button>
-          <button data-act="resetStats">Reset</button></div>
+          <button data-act="resetStats">Reset</button>
+          <button data-act="graph">Show graph</button></div>
       </details>
     </div>`;
   document.body.appendChild(root);
@@ -149,6 +163,11 @@ export function createOverlay({ onChange, onRefresh, onCopyStats, onResetStats }
   root.querySelector('[data-act="resetStats"]').addEventListener('click', () => {
     if (confirm('Clear all recorded stats?')) onResetStats();
   });
+  const graphBtn = root.querySelector('[data-act="graph"]');
+  const graphWin = graph.mount(root, settings.graph, () => saveSettings(settings), open => {
+    graphBtn.textContent = open ? 'Hide graph' : 'Show graph';
+  });
+  graphBtn.addEventListener('click', () => graphWin.setOpen(!settings.graph.open));
   root.querySelector('[data-act="collapse"]').addEventListener('click', () => {
     settings.collapsed = !settings.collapsed;
     root.classList.toggle('collapsed', settings.collapsed);
@@ -221,7 +240,7 @@ function place(root, settings) {
 function makeDraggable(el, handle, onDrop) {
   let start = null;
   handle.addEventListener('pointerdown', e => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button, select')) return;
     const rect = el.getBoundingClientRect();
     el.style.right = 'auto';
     el.style.left = rect.left + 'px';
@@ -247,17 +266,37 @@ export function highlightBuilding(index) {
   if (row) row.classList.add('obh-pick');
 }
 
+// Short suffixes as the game writes them: K to No, then a prefix on each
+// tens name (Dc, UnDc, DoDc, ... Vg, UnVg, ...), up to 1e300.
+const NUM_UNITS = (() => {
+  const prefixes = ['', 'Un', 'Do', 'Tr', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No'];
+  const tens = ['Dc', 'Vg', 'Tg', 'Qd', 'Qq', 'Sg', 'St', 'Og', 'Nn'];
+  const out = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No'];
+  for (const t of tens) for (const p of prefixes) out.push(p + t);
+  return out;
+})();
+
 export function fmtNum(n) {
   if (!isFinite(n)) return '∞';
   if (Math.abs(n) < 1000) return n < 10 ? n.toFixed(1) : Math.round(n).toString();
-  const units = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
-  if (Math.abs(n) >= Math.pow(1000, units.length + 1)) return n.toExponential(3);
-  let i = -1;
-  while (Math.abs(n) >= 1000) {
-    n /= 1000;
+  // Scale by an exact power of ten (repeated /1000 drifts: 1e33 became 999.99No),
+  // then fix a log10 that lands a hair off, and a rounding carry (999.96 → 1.00 of the next unit).
+  let i = Math.floor(Math.log10(Math.abs(n)) / 3) - 1;
+  let m = n / 10 ** (3 * (i + 1));
+  if (Math.abs(m) >= 1000) {
+    m /= 1000;
+    i++;
+  } else if (Math.abs(m) < 1) {
+    m *= 1000;
+    i--;
+  }
+  const digits = Math.abs(m) < 10 ? 2 : 1;
+  if (Math.abs(Number(m.toFixed(digits))) >= 1000) {
+    m /= 1000;
     i++;
   }
-  return n.toFixed(n < 10 ? 2 : 1) + units[i];
+  if (i >= NUM_UNITS.length) return n.toExponential(3);
+  return m.toFixed(Math.abs(m) < 10 ? 2 : 1) + NUM_UNITS[i];
 }
 
 export function fmtTime(sec) {
